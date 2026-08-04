@@ -20,10 +20,10 @@ MATERIAL_LABELS = {
 }
 
 MATERIAL_BASE_RATE = {
-    "carbon_steel": 1.0,
-    "stainless_316": 0.15,
-    "alloy_825": 0.05,
-    "duplex_2205": 0.08,
+    "carbon_steel": 0.8,
+    "stainless_316": 0.08,
+    "alloy_825": 0.02,
+    "duplex_2205": 0.04,
 }
 
 
@@ -55,10 +55,11 @@ def generate_corrosion_data(n_samples=500, random_state=42):
         base = MATERIAL_BASE_RATE[mat]
 
         # de Waard-Milliams 简化模型: log(CR) = 5.8 - 1710/(T+273) + 0.67*log(pCO2)
+        # 缩放因子 0.05 使输出落在工程实际范围 (0.01-5 mm/a)
         if pCO2 > 0.01:
-            dewaard = 10 ** (5.8 - 1710 / (T + 273) + 0.67 * np.log10(pCO2))
+            dewaard = 0.05 * (10 ** (5.8 - 1710 / (T + 273) + 0.67 * np.log10(pCO2)))
         else:
-            dewaard = 0.01
+            dewaard = 0.005
 
         # pH 修正: pH < 6 时加速腐蚀
         ph_factor = 1.0 + max(0, (6.0 - pH)) * 0.8

@@ -35,7 +35,16 @@ class CorrosionPredictor:
     def train(self, df=None):
         """训练模型"""
         if df is None:
-            df = generate_corrosion_data(n_samples=500)
+            csv_path = os.path.join(
+                os.path.dirname(__file__), "..", "data", "corrosion_dataset.csv"
+            )
+            if os.path.exists(csv_path):
+                import pandas as pd
+                df = pd.read_csv(csv_path)
+                print("从 CSV 加载训练数据")
+            else:
+                df = generate_corrosion_data(n_samples=500)
+                print("生成新的模拟训练数据")
 
         X, y, scaler, le, feature_cols = preprocess_data(df)
 
@@ -66,23 +75,25 @@ class CorrosionPredictor:
         return {"r2": r2, "mae": mae}
 
     def save(self, model_dir=None):
-        """保存模型"""
+        """保存模型（部署在只读文件系统时自动跳过）"""
         if not self.is_trained:
             raise RuntimeError("模型尚未训练，请先调用 train()")
 
         if model_dir is None:
             model_dir = os.path.join(os.path.dirname(__file__), "..", "models")
-        os.makedirs(model_dir, exist_ok=True)
-
-        model_path = os.path.join(model_dir, "corrosion_predictor.pkl")
-        with open(model_path, "wb") as f:
-            pickle.dump({
-                "model": self.model,
-                "scaler": self.scaler,
-                "label_encoder": self.label_encoder,
-                "feature_cols": self.feature_cols,
-            }, f)
-        print(f"模型已保存: {model_path}")
+        try:
+            os.makedirs(model_dir, exist_ok=True)
+            model_path = os.path.join(model_dir, "corrosion_predictor.pkl")
+            with open(model_path, "wb") as f:
+                pickle.dump({
+                    "model": self.model,
+                    "scaler": self.scaler,
+                    "label_encoder": self.label_encoder,
+                    "feature_cols": self.feature_cols,
+                }, f)
+            print(f"模型已保存: {model_path}")
+        except (OSError, PermissionError) as e:
+            print(f"模型保存跳过（文件系统只读）: {e}")
 
     def load(self, model_path=None):
         """加载模型"""
