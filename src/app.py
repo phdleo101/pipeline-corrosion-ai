@@ -75,14 +75,7 @@ def clear_chat():
     return [], ""
 
 
-with gr.Blocks(
-    title="管道腐蚀预测与标准问答系统",
-    theme=gr.themes.Soft(),
-    css="""
-    .main-title { text-align: center; margin-bottom: 20px; }
-    .subtitle { text-align: center; color: #666; margin-bottom: 30px; }
-    """,
-) as demo:
+with gr.Blocks(title="管道腐蚀预测与标准问答系统") as demo:
 
     gr.HTML("""
     <div class="main-title">
@@ -241,6 +234,11 @@ with gr.Blocks(
 if __name__ == "__main__":
     demo.launch(
         server_name="0.0.0.0",
-        server_port=7860,
+        server_port=7861,
         share=False,
+        theme=gr.themes.Soft(),
+        css="""
+        .main-title { text-align: center; margin-bottom: 20px; }
+        .subtitle { text-align: center; color: #666; margin-bottom: 30px; }
+        """,
     )
