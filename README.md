@@ -3,9 +3,8 @@ title: Pipeline Corrosion AI
 emoji: 🔧
 colorFrom: blue
 colorTo: indigo
-sdk: gradio
-sdk_version: "4.0.0"
-app_file: src/app.py
+sdk: streamlit
+app_file: src/streamlit_app.py
 pinned: true
 ---
 
@@ -16,7 +15,7 @@ pinned: true
 
 ## 在线 Demo
 
-部署到 HuggingFace Spaces 后，在此处添加 Demo 链接。
+部署到 Streamlit Community Cloud 后，在此处添加 Demo 链接。
 
 ## 问题背景
 
@@ -37,16 +36,16 @@ pinned: true
 
 | 组件 | 技术 |
 |------|------|
-| Web 界面 | Gradio |
+| Web 界面 | Streamlit |
 | 预测模型 | scikit-learn GradientBoosting |
 | RAG 引擎 | LangChain + ChromaDB |
-| 部署 | HuggingFace Spaces |
+| 部署 | Streamlit Community Cloud + GitHub |
 
 ## 本地运行
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/your-username/pipeline-corrosion-ai.git
+git clone https://github.com/phdleo101/pipeline-corrosion-ai.git
 cd pipeline-corrosion-ai
 
 # 2. 创建虚拟环境
@@ -62,10 +61,10 @@ python src/data_processor.py
 python src/corrosion_model.py
 
 # 5. 启动应用
-python src/app.py
+streamlit run src/streamlit_app.py
 ```
 
-访问 http://localhost:7860
+访问 http://localhost:8501
 
 ## 配置（可选）
 
