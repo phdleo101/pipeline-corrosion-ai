@@ -9,9 +9,12 @@ corrosion_model.py
 import os
 import pickle
 import numpy as np
-from sklearn.ensemble import GradientBoostingRegressor
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import r2_score, mean_absolute_error
+import pandas as pd
+from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 
 from data_processor import (
     generate_corrosion_data,
@@ -31,6 +34,8 @@ class CorrosionPredictor:
         self.label_encoder = None
         self.feature_cols = None
         self.is_trained = False
+        self.mae = None  # 用于置信区间估算
+        self.metrics = {}  # 存储训练指标
 
     def train(self, df=None):
         """训练模型"""
@@ -68,6 +73,8 @@ class CorrosionPredictor:
         self.label_encoder = le
         self.feature_cols = feature_cols
         self.is_trained = True
+        self.mae = mae
+        self.metrics = {"r2": r2, "mae": mae, "rmse": np.sqrt(mean_squared_error(y_test, y_pred))}
 
         print(f"模型训练完成")
         print(f"  R² = {r2:.4f}")
@@ -166,6 +173,159 @@ class CorrosionPredictor:
                 "flow_rate": flow_rate,
                 "chloride_content": chloride_content,
             },
+        }
+
+    def predict_with_confidence(self, material, temperature, ph, co2_pressure,
+                                h2s_concentration, flow_rate, chloride_content):
+        """
+        预测腐蚀速率并返回置信区间
+
+        返回:
+            dict: 包含预测值、置信区间下限和上限
+        """
+        if not self.is_trained:
+            self.load()
+
+        base_result = self.predict(
+            material, temperature, ph, co2_pressure,
+            h2s_concentration, flow_rate, chloride_content
+        )
+
+        rate = base_result["corrosion_rate"]
+        mae = self.mae if self.mae else 0.3
+
+        # 95% 置信区间 ≈ 预测值 ± 2*MAE
+        lower = max(0.001, rate - 2 * mae)
+        upper = rate + 2 * mae
+
+        base_result["confidence_lower"] = round(lower, 4)
+        base_result["confidence_upper"] = round(upper, 4)
+        base_result["confidence_range"] = round(upper - lower, 4)
+        return base_result
+
+    def train_multiple_models(self, df=None):
+        """
+        训练多种回归模型并返回对比结果
+
+        返回:
+            dict: 各模型的 R², MAE, RMSE 指标
+        """
+        if df is None:
+            csv_path = os.path.join(
+                os.path.dirname(__file__), "..", "data", "corrosion_dataset.csv"
+            )
+            if os.path.exists(csv_path):
+                df = pd.read_csv(csv_path)
+            else:
+                df = generate_corrosion_data(n_samples=500)
+
+        X, y, scaler, le, feature_cols = preprocess_data(df)
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42
+        )
+
+        models = {
+            "GradientBoosting": GradientBoostingRegressor(
+                n_estimators=200, max_depth=5, learning_rate=0.1, random_state=42
+            ),
+            "RandomForest": RandomForestRegressor(
+                n_estimators=200, max_depth=10, random_state=42
+            ),
+            "DecisionTree": DecisionTreeRegressor(
+                max_depth=8, random_state=42
+            ),
+            "LinearRegression": LinearRegression(),
+        }
+
+        results = {}
+        for name, model in models.items():
+            model.fit(X_train, y_train)
+            y_pred = model.predict(X_test)
+            r2 = r2_score(y_test, y_pred)
+            mae = mean_absolute_error(y_test, y_pred)
+            rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+            results[name] = {
+                "r2": round(r2, 4),
+                "mae": round(mae, 4),
+                "rmse": round(rmse, 4),
+                "model": model,
+            }
+
+        return results
+
+    def get_feature_importance(self):
+        """返回特征重要性排序"""
+        if not self.is_trained:
+            self.load()
+
+        if not hasattr(self.model, "feature_importances_"):
+            return None
+
+        feature_names = [
+            "材料类型", "温度", "pH值", "CO2分压",
+            "H2S浓度", "流速", "氯离子含量"
+        ]
+
+        importances = self.model.feature_importances_
+        sorted_idx = np.argsort(importances)[::-1]
+
+        return [
+            {"feature": feature_names[i], "importance": round(importances[i], 4)}
+            for i in sorted_idx
+        ]
+
+    def get_trend_data(self, param, material, temperature, ph, co2_pressure,
+                       h2s_concentration, flow_rate, chloride_content):
+        """
+        生成趋势分析数据：固定其他参数，变化目标参数，返回腐蚀速率曲线
+
+        参数:
+            param: 要变化的参数名 ('temperature', 'ph', 'co2_pressure', 'flow_rate')
+        返回:
+            dict: {param_values: [...], corrosion_rates: [...]}
+        """
+        if not self.is_trained:
+            self.load()
+
+        param_ranges = {
+            "temperature": np.linspace(0, 150, 50),
+            "ph": np.linspace(3.0, 10.0, 50),
+            "co2_pressure": np.linspace(0.0, 10.0, 50),
+            "flow_rate": np.linspace(0.0, 10.0, 50),
+        }
+
+        if param not in param_ranges:
+            return None
+
+        values = param_ranges[param]
+        rates = []
+
+        for v in values:
+            kwargs = {
+                "material": material,
+                "temperature": temperature,
+                "ph": ph,
+                "co2_pressure": co2_pressure,
+                "h2s_concentration": h2s_concentration,
+                "flow_rate": flow_rate,
+                "chloride_content": chloride_content,
+            }
+            kwargs[param] = float(v)
+            result = self.predict(**kwargs)
+            rates.append(result["corrosion_rate"])
+
+        param_labels = {
+            "temperature": "温度 (°C)",
+            "ph": "pH 值",
+            "co2_pressure": "CO2 分压 (MPa)",
+            "flow_rate": "流速 (m/s)",
+        }
+
+        return {
+            "param_name": param,
+            "param_label": param_labels.get(param, param),
+            "param_values": values.tolist(),
+            "corrosion_rates": rates,
         }
 
 
