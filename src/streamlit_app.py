@@ -211,15 +211,15 @@ with tab1:
 
         col_btn1, col_btn2 = st.columns([2, 1])
         with col_btn1:
-            predict_btn = st.button(T["predict_btn"], type="primary", use_container_width=True)
+            predict_btn = st.button(T["predict_btn"], type="primary", width="stretch")
         with col_btn2:
-            compare_btn = st.button(T["compare_btn"], use_container_width=True)
+            compare_btn = st.button(T["compare_btn"], width="stretch")
 
         col_btn3, col_btn4 = st.columns([1, 1])
         with col_btn3:
-            trend_btn = st.button(T["trend_btn"], use_container_width=True)
+            trend_btn = st.button(T["trend_btn"], width="stretch")
         with col_btn4:
-            share_btn = st.button("🔗 分享", use_container_width=True)
+            share_btn = st.button("🔗 分享", width="stretch")
 
     with col_result:
         st.markdown(f"### {T['result_title']}")
@@ -297,13 +297,13 @@ with tab1:
                 "置信上限": result["confidence_upper"],
                 "风险等级": result["risk_level"],
             }])
-            st.dataframe(export_df, use_container_width=True, hide_index=True)
+            st.dataframe(export_df, width="stretch", hide_index=True)
 
             csv_data = export_df.to_csv(index=False).encode("utf-8-sig")
             st.download_button(
                 "💾 下载 CSV 报告", data=csv_data,
                 file_name=f"corrosion_report_{int(time.time())}.csv",
-                mime="text/csv", use_container_width=True,
+                mime="text/csv", width="stretch",
             )
 
             # 保存到预测历史
@@ -344,7 +344,7 @@ with tab1:
             )
             fig.update_traces(texttemplate="%{text:.3f}", textposition="outside")
             fig.update_layout(height=400, margin=dict(l=20, r=20, t=30, b=20))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
         elif trend_btn:
             st.markdown("#### 📈 趋势分析")
@@ -376,7 +376,7 @@ with tab1:
                     template="plotly_dark" if dark_mode else "plotly_white",
                     margin=dict(l=40, r=20, t=30, b=40),
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
                 st.caption(f"📌 其他参数保持不变：{material_label}，pH={ph}，CO2={co2_pressure}MPa，流速={flow_rate}m/s")
 
         elif share_btn:
@@ -401,7 +401,7 @@ with tab1:
     if "prediction_history" in st.session_state and st.session_state["prediction_history"]:
         with st.expander(f"📋 {T['prediction_history']}（{len(st.session_state['prediction_history'])} 条）", expanded=False):
             hist_df = pd.DataFrame(st.session_state["prediction_history"][-10:])
-            st.dataframe(hist_df, use_container_width=True, hide_index=True)
+            st.dataframe(hist_df, width="stretch", hide_index=True)
 
     # 批量预测
     with st.expander(f"📋 {T['batch_btn']} - 上传 CSV 文件"):
@@ -443,13 +443,13 @@ with tab1:
                     progress.empty()
 
                     result_df = pd.DataFrame(results)
-                    st.dataframe(result_df, use_container_width=True, hide_index=True)
+                    st.dataframe(result_df, width="stretch", hide_index=True)
 
                     csv_batch = result_df.to_csv(index=False).encode("utf-8-sig")
                     st.download_button(
                         "💾 下载批量预测结果", data=csv_batch,
                         file_name=f"batch_prediction_{int(time.time())}.csv",
-                        mime="text/csv", use_container_width=True,
+                        mime="text/csv", width="stretch",
                     )
             except Exception as e:
                 st.error(f"❌ 文件解析失败：{e}")
@@ -485,7 +485,7 @@ with tab2:
     ]
     cols = st.columns(len(example_questions))
     for i, (col, q) in enumerate(zip(cols, example_questions)):
-        if col.button(q, key=f"example_{i}", use_container_width=True):
+        if col.button(q, key=f"example_{i}", width="stretch"):
             st.session_state["pending_question"] = q
 
     if hasattr(rag, "_cache") and len(rag._cache._cache) > 0:
@@ -558,10 +558,10 @@ with tab3:
         col4.metric("风险等级", "4 级")
 
         st.markdown("##### 数据预览")
-        st.dataframe(dataset.head(20), use_container_width=True, hide_index=True)
+        st.dataframe(dataset.head(20), width="stretch", hide_index=True)
 
         st.markdown("##### 描述性统计")
-        st.dataframe(dataset.describe().round(3), use_container_width=True)
+        st.dataframe(dataset.describe().round(3), width="stretch")
 
     # --- 分布分析 ---
     with sub_tab2:
@@ -582,7 +582,7 @@ with tab3:
                 color_discrete_sequence=["#e74c3c"],
             )
             fig_hist.update_layout(height=350, margin=dict(l=20, r=20, t=40, b=20))
-            st.plotly_chart(fig_hist, use_container_width=True)
+            st.plotly_chart(fig_hist, width="stretch")
 
         with col_box:
             fig_box = px.box(
@@ -593,7 +593,7 @@ with tab3:
                 color_discrete_sequence=px.colors.qualitative.Set2,
             )
             fig_box.update_layout(height=350, margin=dict(l=20, r=20, t=40, b=20))
-            st.plotly_chart(fig_box, use_container_width=True)
+            st.plotly_chart(fig_box, width="stretch")
 
     # --- 相关性分析 ---
     with sub_tab3:
@@ -619,7 +619,7 @@ with tab3:
             template="plotly_dark" if dark_mode else "plotly_white",
             margin=dict(l=60, r=20, t=40, b=60),
         )
-        st.plotly_chart(fig_heatmap, use_container_width=True)
+        st.plotly_chart(fig_heatmap, width="stretch")
 
         # 特征重要性
         st.markdown(f"##### {T['feature_importance']}")
@@ -633,7 +633,7 @@ with tab3:
                 color="importance", color_continuous_scale="Viridis",
             )
             fig_imp.update_layout(height=350, margin=dict(l=20, r=20, t=40, b=20))
-            st.plotly_chart(fig_imp, use_container_width=True)
+            st.plotly_chart(fig_imp, width="stretch")
 
     # --- 模型对比 ---
     with sub_tab4:
@@ -651,7 +651,7 @@ with tab3:
                 "RMSE (mm/a)": metrics["rmse"],
             })
         comp_df = pd.DataFrame(comp_data)
-        st.dataframe(comp_df, use_container_width=True, hide_index=True)
+        st.dataframe(comp_df, width="stretch", hide_index=True)
 
         # R² 对比图
         fig_r2 = px.bar(
@@ -663,7 +663,7 @@ with tab3:
         )
         fig_r2.update_traces(texttemplate="%{text:.4f}", textposition="outside")
         fig_r2.update_layout(height=350, margin=dict(l=20, r=20, t=40, b=20))
-        st.plotly_chart(fig_r2, use_container_width=True)
+        st.plotly_chart(fig_r2, width="stretch")
 
         # MAE 对比图
         fig_mae = px.bar(
@@ -675,7 +675,7 @@ with tab3:
         )
         fig_mae.update_traces(texttemplate="%{text:.4f}", textposition="outside")
         fig_mae.update_layout(height=350, margin=dict(l=20, r=20, t=40, b=20))
-        st.plotly_chart(fig_mae, use_container_width=True)
+        st.plotly_chart(fig_mae, width="stretch")
 
         st.info("""
         **📌 选型决策**：GradientBoosting 在 R² 和 MAE 上均表现最优，选择作为生产模型。
