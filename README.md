@@ -15,7 +15,9 @@ pinned: true
 
 ## 在线 Demo
 
-部署到 Streamlit Community Cloud 后，在此处添加 Demo 链接。
+🔗 **https://pipeline-corrosion-ai.streamlit.app/**
+
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://pipeline-corrosion-ai.streamlit.app/)
 
 ## 问题背景
 
