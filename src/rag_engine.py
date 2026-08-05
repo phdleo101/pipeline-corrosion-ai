@@ -10,6 +10,53 @@ import json
 import requests
 
 
+def _load_dify_config():
+    """
+    加载 Dify 配置（支持多种来源）
+
+    优先级:
+    1. Streamlit Secrets（部署时推荐）
+    2. 环境变量（本地开发时使用）
+    3. app_config.yaml 文件
+    """
+    config = {"api_url": "", "api_key": ""}
+
+    # 1. 尝试从 Streamlit Secrets 读取（生产环境）
+    try:
+        import streamlit as st
+        if "dify" in st.secrets:
+            config["api_url"] = st.secrets["dify"].get("api_url", "")
+            config["api_key"] = st.secrets["dify"].get("api_key", "")
+            if config["api_url"] and config["api_key"]:
+                return config
+    except Exception:
+        pass
+
+    # 2. 尝试从环境变量读取
+    config["api_url"] = os.environ.get("DIFY_API_URL", "")
+    config["api_key"] = os.environ.get("DIFY_API_KEY", "")
+
+    if config["api_url"] and config["api_key"]:
+        return config
+
+    # 3. 尝试从 YAML 配置文件读取（本地开发）
+    try:
+        import yaml
+        config_path = os.path.join(
+            os.path.dirname(__file__), "..", "app_config.yaml"
+        )
+        if os.path.exists(config_path):
+            with open(config_path, "r", encoding="utf-8") as f:
+                yaml_config = yaml.safe_load(f) or {}
+            dify_cfg = yaml_config.get("dify", {})
+            config["api_url"] = dify_cfg.get("api_url", "")
+            config["api_key"] = dify_cfg.get("api_key", "")
+    except Exception:
+        pass
+
+    return config
+
+
 class CorrosionRAG:
     """管道腐蚀标准知识库问答引擎"""
 
@@ -26,18 +73,17 @@ class CorrosionRAG:
         self.vector_store = None
         self.llm = None
 
-        # 加载配置
-        self.config = self._load_config(config_path)
-
-        # 尝试初始化 Dify 模式
-        dify_url = os.environ.get("DIFY_API_URL", self.config.get("dify_api_url", ""))
-        dify_key = os.environ.get("DIFY_API_KEY", self.config.get("dify_api_key", ""))
+        # 加载配置（兼容多种来源）
+        self.config = self._load_legacy_config(config_path)
+        dify_cfg = _load_dify_config()
+        dify_url = dify_cfg.get("api_url", "")
+        dify_key = dify_cfg.get("api_key", "")
 
         if dify_url and dify_key:
             self.mode = "dify"
             self.dify_url = dify_url
             self.dify_key = dify_key
-            print("[RAG] 使用 Dify Cloud API 模式")
+            print(f"[RAG] 使用 Dify Cloud API 模式 (URL: {dify_url})")
             return
 
         # 尝试初始化本地模式
@@ -47,8 +93,8 @@ class CorrosionRAG:
             print(f"[RAG] 本地模式初始化失败: {e}")
             print("[RAG] 使用降级模式（需要配置 Dify API 或安装依赖）")
 
-    def _load_config(self, config_path):
-        """加载配置文件"""
+    def _load_legacy_config(self, config_path):
+        """加载本地配置文件（用于本地 LLM key）"""
         if config_path is None:
             config_path = os.path.join(
                 os.path.dirname(__file__), "..", "app_config.yaml"
