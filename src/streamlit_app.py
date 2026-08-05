@@ -118,7 +118,11 @@ with tab1:
         flow_rate = st.slider("流速 (m/s)", 0.0, 10.0, 3.0, step=0.1)
         chloride_content = st.slider("氯离子含量 (ppm)", 0, 100000, 5000, step=500)
 
-        predict_btn = st.button("🔍 预测腐蚀速率", type="primary", use_container_width=True)
+        col_btn1, col_btn2 = st.columns([3, 1])
+        with col_btn1:
+            predict_btn = st.button("🔍 预测腐蚀速率", type="primary", use_container_width=True)
+        with col_btn2:
+            compare_btn = st.button("📊 对比材料", use_container_width=True)
 
     with col_result:
         st.markdown("### 预测结果")
@@ -136,25 +140,99 @@ with tab1:
 
             color, icon = RISK_STYLES.get(result["risk_level"], ("#333", "⚪"))
 
-            # 结果卡片
+            # 腐蚀速率仪表盘（HTML 可视化）
+            rate = result["corrosion_rate"]
+            gauge_pct = min(rate / 2.0 * 100, 100)  # 0-2 mm/a 映射到 0-100%
             st.markdown(f"""
-            | 指标 | 数值 |
-            |------|------|
-            | 管材 | {result['material_label']} |
-            | 腐蚀速率 | **{result['corrosion_rate']} mm/a** |
-            """)
+            <div style="background: #f0f2f6; border-radius: 12px; padding: 20px; margin-bottom: 15px;">
+                <div style="text-align: center; margin-bottom: 10px;">
+                    <span style="font-size: 1.1rem; color: #666;">腐蚀速率</span>
+                </div>
+                <div style="background: #ddd; border-radius: 10px; height: 30px; overflow: hidden; position: relative;">
+                    <div style="background: linear-gradient(90deg, #27ae60 0%, #f39c12 40%, #e74c3c 70%, #c0392b 100%); height: 100%; width: {gauge_pct}%; border-radius: 10px; transition: width 0.5s;"></div>
+                    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-weight: 700; color: #333; font-size: 1.2rem;">{rate:.2f} mm/a</div>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-top: 5px; font-size: 0.75rem; color: #999;">
+                    <span>0 (安全)</span><span>0.5</span><span>1.0</span><span>2.0+ (严重)</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
-            st.markdown(
-                f'<span class="risk-badge" style="background:{color}20;color:{color};">'
-                f'{icon} {result["risk_level"]}</span>',
-                unsafe_allow_html=True,
-            )
+            # 风险等级 + 数据卡片
+            col_risk, col_mat = st.columns(2)
+            with col_risk:
+                st.markdown(
+                    f'<div style="background:{color}15; border: 2px solid {color}; border-radius: 10px; padding: 12px; text-align: center;">'
+                    f'<span style="font-size: 1.5rem;">{icon}</span><br>'
+                    f'<span style="font-weight: 700; color: {color}; font-size: 1.1rem;">{result["risk_level"]}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            with col_mat:
+                st.metric("管材", result["material_label"])
 
             st.markdown("#### 📋 建议")
             st.info(result["suggestion"])
             st.markdown(f"**🔧 材料建议**: {result['material_advice']}")
+
+            # 保存到预测历史
+            if "prediction_history" not in st.session_state:
+                st.session_state["prediction_history"] = []
+            st.session_state["prediction_history"].append({
+                "material": result["material_label"],
+                "rate": rate,
+                "risk": result["risk_level"],
+                "temp": temperature,
+                "ph": ph,
+                "co2": co2_pressure,
+            })
+
+        elif compare_btn:
+            # 材料对比模式：相同工况下不同材料的腐蚀速率
+            st.markdown("#### 📊 不同材料对比（相同工况）")
+            compare_results = []
+            for mat_label, mat_code in MATERIAL_CHOICES.items():
+                r = predictor.predict(
+                    material=mat_code,
+                    temperature=float(temperature),
+                    ph=float(ph),
+                    co2_pressure=float(co2_pressure),
+                    h2s_concentration=float(h2s_concentration),
+                    flow_rate=float(flow_rate),
+                    chloride_content=float(chloride_content),
+                )
+                compare_results.append((mat_label, r["corrosion_rate"], r["risk_level"]))
+
+            # 用柱状图展示
+            for mat_label, rate, risk in compare_results:
+                c, icon = RISK_STYLES.get(risk, ("#333", "⚪"))
+                pct = min(rate / 2.0 * 100, 100)
+                st.markdown(
+                    f'<div style="margin-bottom: 8px;">'
+                    f'<div style="display: flex; justify-content: space-between; margin-bottom: 2px;">'
+                    f'<span style="font-weight: 600;">{icon} {mat_label}</span>'
+                    f'<span style="color: {c}; font-weight: 700;">{rate:.2f} mm/a</span>'
+                    f'</div>'
+                    f'<div style="background: #ddd; border-radius: 6px; height: 18px; overflow: hidden;">'
+                    f'<div style="background: {c}; height: 100%; width: {pct}%; border-radius: 6px;"></div>'
+                    f'</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
         else:
-            st.info("👈 调整左侧参数后，点击「预测腐蚀速率」按钮查看结果。")
+            st.info("👈 调整左侧参数后，点击「预测腐蚀速率」或「对比材料」按钮查看结果。")
+
+    # 预测历史
+    if "prediction_history" in st.session_state and st.session_state["prediction_history"]:
+        with st.expander(f"📋 预测历史（{len(st.session_state['prediction_history'])} 条）", expanded=False):
+            for i, h in enumerate(reversed(st.session_state["prediction_history"][-5:])):
+                c, icon = RISK_STYLES.get(h["risk"], ("#333", "⚪"))
+                st.markdown(
+                    f'<span style="color: {c};">{icon} {h["material"]}</span> | '
+                    f'速率: **{h["rate"]:.2f} mm/a** | '
+                    f'温度: {h["temp"]}°C | pH: {h["ph"]} | CO2: {h["co2"]} MPa',
+                    unsafe_allow_html=True,
+                )
 
     st.markdown("""
     ---
@@ -192,6 +270,10 @@ with tab2:
         if col.button(q, key=f"example_{i}", use_container_width=True):
             st.session_state["pending_question"] = q
 
+    # 缓存状态提示
+    if hasattr(rag, "_cache") and len(rag._cache._cache) > 0:
+        st.caption(f"📦 缓存: {len(rag._cache._cache)} 条常见问答（重复问题秒回）")
+
     st.markdown("---")
 
     # 初始化聊天历史
@@ -218,16 +300,32 @@ with tab2:
             with st.chat_message("user"):
                 st.markdown(question)
 
-        # 获取回答
+        # 获取回答（流式模式）
         with chat_container:
             with st.chat_message("assistant"):
-                with st.spinner("正在检索知识库..."):
-                    answer = rag.query(question)
-                st.markdown(answer)
+                if rag.mode == "dify":
+                    # Dify 模式：使用流式显示
+                    status_placeholder = st.empty()
+                    status_placeholder.info("🔍 正在检索知识库...")
+                    try:
+                        # 切换状态到"生成中"
+                        status_placeholder.info("✍️ 正在生成回答...")
+                        # 流式输出
+                        full_answer = st.write_stream(rag.query_stream(question))
+                        status_placeholder.empty()
+                    except Exception as e:
+                        status_placeholder.empty()
+                        full_answer = f"⚠️ 回答生成出错: {e}"
+                        st.markdown(full_answer)
+                else:
+                    # 本地/降级模式：同步显示
+                    with st.spinner("正在检索知识库..."):
+                        full_answer = rag.query(question)
+                    st.markdown(full_answer)
 
         # 保存到历史
         st.session_state.messages.append({"role": "user", "content": question})
-        st.session_state.messages.append({"role": "assistant", "content": answer})
+        st.session_state.messages.append({"role": "assistant", "content": full_answer})
 
     # 清空按钮
     col_clear, col_info = st.columns([1, 5])

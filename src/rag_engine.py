@@ -2,12 +2,36 @@
 rag_engine.py
 管道腐蚀标准知识库 RAG 引擎
 - 支持本地向量检索 (ChromaDB) 和 Dify Cloud API 两种模式
+- 支持 blocking（同步）和 streaming（流式）两种查询模式
 - 文档加载、分段、向量化、检索、问答
 """
 
 import os
 import json
+import time
 import requests
+from collections import OrderedDict
+
+
+class _LRUCache:
+    """简单的 LRU 缓存，用于缓存常见问题回答"""
+
+    def __init__(self, capacity=20):
+        self._cache = OrderedDict()
+        self._capacity = capacity
+
+    def get(self, key):
+        if key in self._cache:
+            self._cache.move_to_end(key)
+            return self._cache[key]
+        return None
+
+    def set(self, key, value):
+        if key in self._cache:
+            self._cache.move_to_end(key)
+        self._cache[key] = value
+        if len(self._cache) > self._capacity:
+            self._cache.popitem(last=False)
 
 
 def _load_dify_config():
@@ -72,6 +96,7 @@ class CorrosionRAG:
         self.mode = "fallback"
         self.vector_store = None
         self.llm = None
+        self._cache = _LRUCache(capacity=20)  # 缓存常见问题回答
 
         # 加载配置（兼容多种来源）
         self.config = self._load_legacy_config(config_path)
@@ -266,7 +291,7 @@ FBE（熔结环氧粉末）：单层涂层，耐温性好，适用于高温管�
 
     def query(self, question):
         """
-        查询知识库
+        查询知识库（同步模式，返回完整字符串）
 
         参数:
             question: 用户的自然语言问题
@@ -274,12 +299,71 @@ FBE（熔结环氧粉末）：单层涂层，耐温性好，适用于高温管�
         返回:
             str: 答案文本
         """
+        # 检查缓存
+        cached = self._cache.get(question)
+        if cached:
+            print(f"[RAG] 命中缓存: {question[:30]}...")
+            return cached
+
         if self.mode == "dify":
-            return self._query_dify(question)
+            result = self._query_dify(question)
         elif self.mode == "local":
-            return self._query_local(question)
+            result = self._query_local(question)
         else:
-            return self._query_fallback(question)
+            result = self._query_fallback(question)
+
+        # 缓存结果（fallback 模式不缓存）
+        if self.mode != "fallback" and result:
+            self._cache.set(question, result)
+
+        return result
+
+    def query_stream(self, question):
+        """
+        流式查询知识库（返回生成器，逐字输出）
+
+        适用于 Dify 模式，使用 SSE 流式传输。
+        对于 local/fallback 模式，退化为同步查询后逐字模拟输出。
+
+        参数:
+            question: 用户的自然语言问题
+
+        返回:
+            generator: 逐段 yield 答案文本
+        """
+        # 检查缓存（命中缓存时直接逐字返回）
+        cached = self._cache.get(question)
+        if cached:
+            print(f"[RAG] 流式命中缓存: {question[:30]}...")
+            # 模拟逐字输出
+            chunk_size = 10
+            for i in range(0, len(cached), chunk_size):
+                yield cached[i : i + chunk_size]
+            return
+
+        if self.mode == "dify":
+            # 流式调用 Dify API
+            full_answer = ""
+            try:
+                for chunk in self._query_dify_stream(question):
+                    full_answer += chunk
+                    yield chunk
+                # 缓存完整回答
+                if full_answer:
+                    self._cache.set(question, full_answer)
+            except Exception as e:
+                error_msg = f"\n\n⚠️ 流式查询出错: {e}"
+                yield error_msg
+        elif self.mode == "local":
+            result = self._query_local(question)
+            self._cache.set(question, result)
+            # 逐字模拟
+            chunk_size = 10
+            for i in range(0, len(result), chunk_size):
+                yield result[i : i + chunk_size]
+        else:
+            result = self._query_fallback(question)
+            yield result
 
     def _query_dify(self, question):
         """通过 Dify Cloud API 查询（带重试机制 + 长超时）"""
@@ -349,7 +433,86 @@ FBE（熔结环氧粉末）：单层涂层，耐温性好，适用于高温管�
 - 复杂查询（需检索多个段落）可能需要更长响应时间"""
         return error_msg
 
-    def _query_local(self, question):
+    def _query_dify_stream(self, question):
+        """通过 Dify Cloud API 流式查询（SSE）"""
+        headers = {
+            "Authorization": f"Bearer {self.dify_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "inputs": {},
+            "query": question,
+            "response_mode": "streaming",
+            "user": "corrosion-ai-user",
+        }
+
+        max_retries = 2
+        timeout_config = (10, 120)  # 流式模式超时更宽松
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                print(f"[RAG] Dify Streaming API 调用第 {attempt}/{max_retries} 次...")
+                response = requests.post(
+                    f"{self.dify_url}/chat-messages",
+                    headers=headers,
+                    json=payload,
+                    timeout=timeout_config,
+                    stream=True,  # 启用流式接收
+                )
+                response.raise_for_status()
+
+                # 解析 SSE 事件流
+                for line in response.iter_lines(decode_unicode=True):
+                    if not line:
+                        continue
+                    if line.startswith("data: "):
+                        data_str = line[6:]  # 去掉 "data: " 前缀
+                        try:
+                            data = json.loads(data_str)
+                            event_type = data.get("event", "")
+
+                            if event_type == "message":
+                                answer_chunk = data.get("answer", "")
+                                if answer_chunk:
+                                    yield answer_chunk
+
+                            elif event_type == "message_end":
+                                print("[RAG] Dify Streaming 完成")
+                                return
+
+                            elif event_type == "error":
+                                error_msg = data.get("message", "未知错误")
+                                yield f"\n\n⚠️ Dify 返回错误: {error_msg}"
+                                return
+
+                        except json.JSONDecodeError:
+                            continue
+
+                # 如果循环正常结束（没有 message_end 事件）
+                print("[RAG] Dify Streaming 流结束")
+                return
+
+            except requests.exceptions.Timeout:
+                print(f"[RAG] 流式查询超时（尝试 {attempt}/{max_retries}）")
+                if attempt < max_retries:
+                    time.sleep(2)
+                else:
+                    yield "\n\n⚠️ 网络超时，请稍后重试或点击清空对话后再次提问。"
+                    return
+            except requests.exceptions.ConnectionError:
+                print(f"[RAG] 流式连接错误（尝试 {attempt}/{max_retries}）")
+                if attempt < max_retries:
+                    time.sleep(2)
+                else:
+                    yield "\n\n⚠️ 网络连接失败，请稍后重试。"
+                    return
+            except Exception as e:
+                print(f"[RAG] 流式查询异常: {e}")
+                if attempt < max_retries:
+                    time.sleep(2)
+                else:
+                    yield f"\n\n⚠️ 查询出错: {e}"
+                    return
         """通过本地向量检索查询"""
         try:
             if self.llm:
