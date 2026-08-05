@@ -282,30 +282,72 @@ FBE（熔结环氧粉末）：单层涂层，耐温性好，适用于高温管�
             return self._query_fallback(question)
 
     def _query_dify(self, question):
-        """通过 Dify Cloud API 查询"""
-        try:
-            headers = {
-                "Authorization": f"Bearer {self.dify_key}",
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "inputs": {},
-                "query": question,
-                "response_mode": "blocking",
-                "user": "corrosion-ai-user",
-            }
-            response = requests.post(
-                f"{self.dify_url}/chat-messages",
-                headers=headers,
-                json=payload,
-                timeout=30,
-            )
-            response.raise_for_status()
-            result = response.json()
-            answer = result.get("answer", "未能获取回答")
-            return answer
-        except Exception as e:
-            return f"Dify API 查询失败: {e}\n请检查 API 配置或使用本地模式。"
+        """通过 Dify Cloud API 查询（带重试机制 + 长超时）"""
+        import time
+
+        headers = {
+            "Authorization": f"Bearer {self.dify_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "inputs": {},
+            "query": question,
+            "response_mode": "blocking",
+            "user": "corrosion-ai-user",
+        }
+
+        # 重试配置：3 次重试，指数退避
+        max_retries = 3
+        timeout_config = (10, 90)  # (连接超时, 读取超时)
+
+        last_error = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                print(f"[RAG] Dify API 调用第 {attempt}/{max_retries} 次...")
+                response = requests.post(
+                    f"{self.dify_url}/chat-messages",
+                    headers=headers,
+                    json=payload,
+                    timeout=timeout_config,
+                )
+                response.raise_for_status()
+                result = response.json()
+                answer = result.get("answer", "未能获取回答")
+                if answer and answer != "未能获取回答":
+                    print(f"[RAG] Dify API 调用成功（{attempt} 次尝试）")
+                    return answer
+                else:
+                    last_error = "Dify 返回了空回答"
+                    print(f"[RAG] {last_error}")
+            except requests.exceptions.Timeout as e:
+                last_error = f"网络超时（{timeout_config[1]}秒内无响应）"
+                print(f"[RAG] {last_error}: {e}")
+            except requests.exceptions.ConnectionError as e:
+                last_error = f"网络连接错误"
+                print(f"[RAG] {last_error}: {e}")
+            except Exception as e:
+                last_error = str(e)
+                print(f"[RAG] 调用异常: {e}")
+
+            # 如果不是最后一次，等待后重试
+            if attempt < max_retries:
+                wait_time = 2 ** attempt  # 2s, 4s, 8s
+                print(f"[RAG] 等待 {wait_time} 秒后重试...")
+                time.sleep(wait_time)
+
+        # 3 次都失败
+        error_msg = f"""Dify API 查询失败（已重试 {max_retries} 次）: {last_error}
+
+**可能原因**:
+1. Streamlit Cloud 出口网络访问 api.dify.ai 不稳定
+2. Dify Cloud 服务端响应较慢
+3. 网络临时波动
+
+**建议**:
+- 稍后重试（云端网络可能临时拥堵）
+- 或在 Streamlit Cloud 控制台点击「Reboot app」重启应用
+- 复杂查询（需检索多个段落）可能需要更长响应时间"""
+        return error_msg
 
     def _query_local(self, question):
         """通过本地向量检索查询"""
