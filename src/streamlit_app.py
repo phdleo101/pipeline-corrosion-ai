@@ -25,6 +25,16 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# ----------------------
+# 从 Streamlit Secrets 读取 Dify 配置
+# ----------------------
+try:
+    if "dify" in st.secrets:
+        os.environ["DIFY_API_URL"] = st.secrets["dify"]["api_url"]
+        os.environ["DIFY_API_KEY"] = st.secrets["dify"]["api_key"]
+except Exception:
+    pass  # Secrets 未配置时静默跳过，使用 fallback 模式
+
 # 自定义样式
 st.markdown("""
 <style>
@@ -159,6 +169,31 @@ with tab1:
 with tab2:
     st.markdown("### 💬 腐蚀标准知识问答")
 
+    # RAG 模式状态指示
+    mode_labels = {
+        "dify": ("🟢 Dify API 智能问答模式", "已连接 Dify Cloud，支持自然语言智能问答"),
+        "local": ("🟡 本地向量检索模式", "使用 LangChain + ChromaDB 本地检索"),
+        "fallback": ("⚪ 基础模式", "配置 Dify API 后可获得更强问答能力"),
+    }
+    mode_label, mode_desc = mode_labels.get(rag.mode, mode_labels["fallback"])
+    st.caption(f"{mode_label} — {mode_desc}")
+
+    # 示例问题
+    st.markdown("#### 💡 试试这些问题：")
+    example_questions = [
+        "在什么条件下需要使用 NACE MR0175 规定的抗硫材料？",
+        "CO2腐蚀的机理和影响因素是什么？",
+        "管道腐蚀速率的风险等级如何划分？",
+        "阴极保护的最小保护电位是多少？",
+        "ASME B31G 如何评估腐蚀缺陷的剩余强度？",
+    ]
+    cols = st.columns(len(example_questions))
+    for i, (col, q) in enumerate(zip(cols, example_questions)):
+        if col.button(q, key=f"example_{i}", use_container_width=True):
+            st.session_state["pending_question"] = q
+
+    st.markdown("---")
+
     # 初始化聊天历史
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -171,7 +206,13 @@ with tab2:
                 st.markdown(msg["content"])
 
     # 用户输入
-    if question := st.chat_input("输入你的问题，例如：在什么条件下需要使用抗硫材料？"):
+    question = st.chat_input("输入你的问题，例如：在什么条件下需要使用抗硫材料？")
+
+    # 处理示例问题点击
+    if "pending_question" in st.session_state:
+        question = st.session_state.pop("pending_question")
+
+    if question:
         # 显示用户消息
         with chat_container:
             with st.chat_message("user"):
@@ -197,15 +238,19 @@ with tab2:
 
     st.markdown("""
     ---
-    **📚 内置知识库涵盖**:
+    **📚 知识库涵盖**:
     - NACE MR0175/ISO 15156（抗硫材料选用）
     - API 571（损伤机理辨识）
     - ASME B31.8S（输气管道完整性管理）
     - ASME B31G（腐蚀缺陷评估）
     - NACE SP0162（阴极保护）
     - API 1163（管道内检测）
+    - NACE SP0775（腐蚀速率分类与缓蚀剂）
+    - NACE SP0185（管道涂层系统）
+    - de Waard-Milliams CO2 腐蚀预测模型
+    - 管道完整性管理最佳实践
 
-    **⚡ 增强模式**: 配置 Dify API 或 LLM API Key 后，可获得更精准的智能问答能力。
+    **🔧 增强模式**: 已配置 Dify Cloud API，支持自然语言智能问答。
     """)
 
 # ======================
@@ -226,9 +271,10 @@ with tab3:
     - 自动给出防护建议和材料升级建议
 
     **2. 标准问答模块**
-    - 内置 NACE/API/ASME 标准知识库
+    - 内置 NACE/API/ASME 标准知识库（8 大标准领域）
     - 支持 RAG 检索增强生成
-    - 可对接 Dify Cloud 获取更强的问答能力
+    - 三级降级策略：Dify API → 本地向量检索 → 基础模式
+    - Dify Cloud 集成：自然语言智能问答 + 知识库检索
 
     ### 技术栈
 
