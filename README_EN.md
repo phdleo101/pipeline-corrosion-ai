@@ -1,6 +1,5 @@
 # Pipeline Corrosion AI
 
-> FDE Cross-Industry Portfolio | Project 1 | Energy Sector
 > Solving corrosion prediction and standards retrieval problems in pipeline integrity management with AI.
 
 ## Live Demo

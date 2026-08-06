@@ -35,7 +35,7 @@ Git 推送代码时需要用 Token 代替密码验证：
 1. 登录 GitHub，点击右上角 **+** → **New repository**
 2. 填写：
    - **Repository name**: `pipeline-corrosion-ai`
-   - **Description**: `管道腐蚀预测与标准问答系统 | FDE 跨行业作品集项目一`
+   - **Description**: `管道腐蚀预测与标准问答系统`
    - **Visibility**: 选择 **Public**（公开，面试官需要查看）
    - **Initialize this repository with**: 全部不勾选（我们已有本地仓库）
 3. 点击 **Create repository**
@@ -81,7 +81,7 @@ git push -u origin main
 ```markdown
 # 你好，我是 你的名字
 
-## FDE 跨行业 AI 作品集
+## AI 项目
 
 | # | 项目 | 行业 | Demo | 代码 |
 |---|------|------|------|------|

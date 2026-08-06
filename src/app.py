@@ -82,7 +82,7 @@ with gr.Blocks(title="管道腐蚀预测与标准问答系统") as demo:
         <h1>管道腐蚀预测与标准问答系统</h1>
     </div>
     <div class="subtitle">
-        <p>Pipeline Corrosion Prediction & Standards Q&A | FDE 项目作品集</p>
+        <p>Pipeline Corrosion Prediction & Standards Q&A</p>
     </div>
     """)
 
@@ -192,8 +192,8 @@ with gr.Blocks(title="管道腐蚀预测与标准问答系统") as demo:
         gr.Markdown("""
         ## 关于本系统
 
-        本系统是 FDE（Forward Deployed Engineer）跨行业作品集的项目一，
-        展示 AI 在管道完整性管理领域的落地应用。
+        本系统面向管道完整性管理场景，集成腐蚀速率预测与国际标准智能问答功能，
+        为管道运维人员提供数据驱动的腐蚀风险评估与标准检索工具。
 
         ### 功能模块
 
@@ -215,15 +215,6 @@ with gr.Blocks(title="管道腐蚀预测与标准问答系统") as demo:
         | 预测模型 | scikit-learn GradientBoosting |
         | RAG 引擎 | LangChain + ChromaDB |
         | 部署平台 | HuggingFace Spaces |
-
-        ### FDE 方法论
-
-        本项目遵循五步 FDE 方法论：
-        1. 行业速学 -> 管道完整性管理行业调研
-        2. 痛点定位 -> 腐蚀预测依赖经验 + 标准检索耗时
-        3. 方案设计 -> 双模块架构（预测 + 问答）
-        4. AI 驱动构建 -> LangChain + scikit-learn
-        5. 部署验证 -> HuggingFace Spaces 在线 Demo
 
         ### 联系方式
 

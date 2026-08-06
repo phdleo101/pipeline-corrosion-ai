@@ -12,7 +12,6 @@ pinned: true
 
 > [English](README_EN.md) | 中文
 
-> FDE 跨行业作品集 | 项目一 | 能源行业
 > 用 AI 技术解决管道完整性管理中的腐蚀预测和标准检索问题。
 
 ## 在线 Demo
@@ -74,7 +73,7 @@ streamlit run src/streamlit_app.py
 
 编辑 `app_config.yaml` 配置 LLM API Key 或 Dify Cloud API，启用增强问答功能。
 
-## FDE 案例文档
+## 项目文档
 
 - [行业调研报告](docs/01-industry-analysis.md)
 - [方案设计文档](docs/02-solution-design.md)

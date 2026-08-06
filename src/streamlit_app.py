@@ -63,7 +63,7 @@ with st.sidebar:
     - [关于](#tab4)
     """)
     st.markdown("---")
-    st.caption("FDE Portfolio Project 1\n MIT License")
+    st.caption("MIT License")
 
 # 暗黑模式 CSS
 apply_theme(dark_mode)
@@ -72,7 +72,7 @@ apply_theme(dark_mode)
 I18N = {
     "中文": {
         "title": "🔧 管道腐蚀预测与标准问答系统",
-        "subtitle": "Pipeline Corrosion Prediction & Standards Q&A | FDE 项目作品集",
+        "subtitle": "Pipeline Corrosion Prediction & Standards Q&A",
         "tabs": ["📊 腐蚀预测", "💬 标准问答", "📈 数据探索", "ℹ️ 关于"],
         "input_params": "输入管道参数",
         "predict_btn": "🔍 预测腐蚀速率",
@@ -93,7 +93,7 @@ I18N = {
     },
     "English": {
         "title": "🔧 Pipeline Corrosion Prediction & Standards Q&A",
-        "subtitle": "FDE Portfolio Project | AI-Powered Corrosion Management",
+        "subtitle": "AI-Powered Corrosion Management",
         "tabs": ["📊 Prediction", "💬 Q&A", "📈 Data Explorer", "ℹ️ About"],
         "input_params": "Input Parameters",
         "predict_btn": "🔍 Predict Corrosion Rate",
@@ -671,8 +671,8 @@ with tab4:
     st.markdown("""
     ## 关于本系统
 
-    本系统是 FDE（Forward Deployed Engineer）跨行业作品集的 **项目一**，
-    展示 AI 在管道完整性管理领域的落地应用。
+    本系统面向管道完整性管理场景，集成腐蚀速率预测与国际标准智能问答功能，
+    为管道运维人员提供数据驱动的腐蚀风险评估与标准检索工具。
 
     ### 功能模块
 
@@ -703,21 +703,11 @@ with tab4:
     | 部署平台 | Streamlit Community Cloud |
     | 版本控制 | GitHub |
 
-    ### FDE 方法论
-
-    | 步骤 | 内容 |
-    |------|------|
-    | 1. 行业速学 | 管道完整性管理行业调研 |
-    | 2. 痛点定位 | 腐蚀预测依赖经验 + 标准检索耗时 |
-    | 3. 方案设计 | 双模块架构（预测 + 问答）+ 数据探索 |
-    | 4. AI 驱动构建 | Dify + scikit-learn + Streamlit |
-    | 5. 部署验证 | Streamlit Community Cloud 在线 Demo |
-
     ### 联系方式
 
     GitHub: [项目仓库](https://github.com/phdleo101/pipeline-corrosion-ai)
     Demo: [在线体验](https://pipeline-corrosion-ai.streamlit.app/)
 
     ---
-    *MIT License | FDE Portfolio Project*
+    *MIT License*
     """)
