@@ -144,10 +144,16 @@ rag = get_rag()
 dataset = get_dataset()
 
 MATERIAL_CHOICES = {
-    "碳钢 / Carbon Steel": "carbon_steel",
-    "316不锈钢 / 316 SS": "stainless_316",
-    "825合金 / Alloy 825": "alloy_825",
-    "2205双相钢 / Duplex 2205": "duplex_2205",
+    "碳钢 (Carbon Steel)": "carbon_steel",
+    "316不锈钢 (316 SS)": "stainless_316",
+    "13Cr马氏体不锈钢 (13Cr)": "13cr",
+    "超级13Cr (Super 13Cr)": "super_13cr",
+    "2205双相不锈钢 (Duplex 2205)": "duplex_2205",
+    "2507超级双相不锈钢 (Super Duplex 2507)": "duplex_2507",
+    "825合金 (Alloy 825)": "alloy_825",
+    "625合金 (Inconel 625)": "alloy_625",
+    "C-276合金 (Hastelloy C-276)": "alloy_c276",
+    "钛合金 (Titanium Gr.2)": "titanium",
 }
 
 RISK_STYLES = {
@@ -287,6 +293,75 @@ with tab1:
                 file_name=f"corrosion_report_{int(time.time())}.csv",
                 mime="text/csv", width="stretch",
             )
+
+            # ===== 检测周期推荐（基于NACE SP0775 / API 570）=====
+            st.markdown("---")
+            st.markdown("#### 📅 检测周期推荐")
+
+            inspection_intervals = {
+                "低风险": {"ili": "10-14 年", "ecda": "7-10 年", "cp": "5-7 年", "action": "常规监测周期"},
+                "中风险": {"ili": "7-10 年", "ecda": "5-7 年", "cp": "3-5 年", "action": "加强监测，增加缓蚀剂"},
+                "高风险": {"ili": "5-7 年", "ecda": "3-5 年", "cp": "1-2 年", "action": "评估剩余强度，制定维修计划"},
+                "严重风险": {"ili": "3-5 年或立即评估", "ecda": "1-3 年", "cp": "6-12 个月", "action": "立即降压运行或维修"},
+            }
+            interval = inspection_intervals.get(result["risk_level"], inspection_intervals["低风险"])
+
+            col_ili, col_ecda, col_cp = st.columns(3)
+            col_ili.metric("🔧 内检测(ILI)", interval["ili"])
+            col_ecda.metric("🔍 外腐蚀评估(ECDA)", interval["ecda"])
+            col_cp.metric("⚡ 阴保监测(CP)", interval["cp"])
+            st.caption(f"📋 基于 NACE SP0775 风险分类标准 | 建议措施：{interval['action']}")
+
+            # ===== 剩余寿命预测器 =====
+            st.markdown("#### ⏳ 剩余寿命评估")
+            st.markdown("输入管道壁厚参数，计算管道剩余服役寿命：")
+
+            col_life1, col_life2, col_life3 = st.columns(3)
+            with col_life1:
+                nominal_wt = st.number_input("公称壁厚 (mm)", min_value=3.0, max_value=50.0, value=8.0, step=0.5, key="nominal_wt")
+            with col_life2:
+                measured_wt = st.number_input("实测壁厚 (mm)", min_value=1.0, max_value=50.0, value=7.2, step=0.1, key="measured_wt")
+            with col_life3:
+                min_wt = st.number_input("最小允许壁厚 (mm)", min_value=1.0, max_value=30.0, value=4.0, step=0.5, key="min_wt",
+                                         help="通常取公称壁厚的40%-50%，或按ASME B31G计算")
+
+            if st.button("🔢 计算剩余寿命", key="calc_life", width="stretch"):
+                if rate > 0.001:
+                    remaining_wall = measured_wt - min_wt
+                    if remaining_wall > 0:
+                        remaining_life = remaining_wall / rate
+                        corrosion_margin = nominal_wt - measured_wt
+                        years_since_last = corrosion_margin / rate if rate > 0 else 0
+
+                        if remaining_life > 10:
+                            life_color, life_icon, life_msg = "#27ae60", "🟢", f"剩余寿命充足（{remaining_life:.1f} 年），按常规周期监测"
+                        elif remaining_life > 5:
+                            life_color, life_icon, life_msg = "#f39c12", "🟡", f"剩余寿命中等（{remaining_life:.1f} 年），制定中期维修计划"
+                        elif remaining_life > 1:
+                            life_color, life_icon, life_msg = "#e74c3c", "🔴", f"剩余寿命不足（{remaining_life:.1f} 年），优先安排维修/更换"
+                        else:
+                            life_color, life_icon, life_msg = "#c0392b", "🔴", f"⚠️ 管道已临近失效（剩余 {remaining_life:.1f} 年），需立即维修或降压运行"
+
+                        st.markdown(f"""
+                        <div style="background: {life_color}15; border: 2px solid {life_color}; border-radius: 10px; padding: 16px; margin: 10px 0;">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <span style="font-size: 1.3rem;">{life_icon}</span>
+                                <span style="font-size: 1.8rem; font-weight: 700; color: {life_color};">{remaining_life:.1f} 年</span>
+                            </div>
+                            <div style="margin-top: 8px; font-size: 0.9rem;">{life_msg}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        col_detail1, col_detail2 = st.columns(2)
+                        col_detail1.metric("已腐蚀壁厚", f"{nominal_wt - measured_wt:.1f} mm")
+                        col_detail2.metric("可用壁厚余量", f"{remaining_wall:.1f} mm")
+
+                        if years_since_last > 0:
+                            st.caption(f"📌 推算距上次检测约 {years_since_last:.1f} 年 | 预计下次检测时间：{interval['ili']}")
+                    else:
+                        st.error(f"⚠️ 实测壁厚({measured_wt:.1f}mm)已低于最小允许壁厚({min_wt:.1f}mm)，管道不满足安全运行条件，需立即维修或更换！")
+                else:
+                    st.success("✅ 腐蚀速率极低（<0.001 mm/a），剩余寿命可视为无限期，按常规周期监测即可。")
 
             # 保存到预测历史
             if "prediction_history" not in st.session_state:
@@ -536,7 +611,7 @@ with tab3:
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("样本总数", f"{len(dataset)}")
         col2.metric("特征数", "7")
-        col3.metric("材料类型", "4 种")
+        col3.metric("材料类型", "10 种")
         col4.metric("风险等级", "4 级")
 
         st.markdown("##### 数据预览")
@@ -677,17 +752,21 @@ with tab4:
     ### 功能模块
 
     **1. 腐蚀预测模块**
-    - 基于 500 条模拟腐蚀数据训练的 GradientBoosting 模型（R²=0.80）
+    - 基于 500 条模拟腐蚀数据训练的 GradientBoosting 模型（R²=0.89）
     - 输入 7 个管道参数即可预测腐蚀速率和风险等级
-    - 支持 95% 置信区间、趋势分析、材料对比、批量预测
-    - 自动给出防护建议和材料升级建议
+    - 支持 10 种工业管材（碳钢/不锈钢/13Cr/双相钢/镍基合金/钛合金）
+    - 95% 置信区间、趋势分析、材料对比、批量预测、CSV 导出
 
-    **2. 标准问答模块**
-    - Dify Cloud RAG 引擎 + 10 大国际标准知识库
+    **2. 完整性评估模块**
+    - 剩余寿命预测：基于壁厚参数和腐蚀速率计算管道剩余服役寿命
+    - 检测周期推荐：依据 NACE SP0775 风险分类推荐内检测/外检测/阴保监测周期
+
+    **3. 标准问答模块**
+    - Dify Cloud RAG 引擎 + 国际标准（NACE/API/ASME）+ 中国标准（GB/SY/T）知识库
     - Streaming 流式响应（首字 2-3 秒）+ LRU 缓存
     - 三级降级策略：Dify API → 本地向量检索 → 基础模式
 
-    **3. 数据探索模块**
+    **4. 数据探索模块**
     - 数据集统计概览与预览
     - 分布分析（直方图 + 箱线图）
     - 相关性热力图 + 特征重要性

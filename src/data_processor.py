@@ -11,19 +11,48 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 import os
 
-MATERIALS = ["carbon_steel", "stainless_316", "alloy_825", "duplex_2205"]
+MATERIALS = [
+    "carbon_steel", "stainless_316", "13cr", "super_13cr",
+    "duplex_2205", "duplex_2507", "alloy_825", "alloy_625",
+    "alloy_c276", "titanium",
+]
 MATERIAL_LABELS = {
-    "carbon_steel": "碳钢",
-    "stainless_316": "316不锈钢",
-    "alloy_825": "825合金",
-    "duplex_2205": "2205双相不锈钢",
+    "carbon_steel": "碳钢 (Carbon Steel)",
+    "stainless_316": "316不锈钢 (316 SS)",
+    "13cr": "13Cr马氏体不锈钢 (13Cr)",
+    "super_13cr": "超级13Cr (Super 13Cr)",
+    "duplex_2205": "2205双相不锈钢 (Duplex 2205)",
+    "duplex_2507": "2507超级双相不锈钢 (Super Duplex 2507)",
+    "alloy_825": "825合金 (Alloy 825)",
+    "alloy_625": "625合金 (Inconel 625)",
+    "alloy_c276": "C-276合金 (Hastelloy C-276)",
+    "titanium": "钛合金 (Titanium Gr.2)",
 }
 
 MATERIAL_BASE_RATE = {
     "carbon_steel": 0.8,
     "stainless_316": 0.08,
-    "alloy_825": 0.02,
+    "13cr": 0.12,
+    "super_13cr": 0.06,
     "duplex_2205": 0.04,
+    "duplex_2507": 0.02,
+    "alloy_825": 0.02,
+    "alloy_625": 0.008,
+    "alloy_c276": 0.004,
+    "titanium": 0.001,
+}
+
+MATERIAL_INFO = {
+    "carbon_steel": {"pren": 0, "hrc_limit": 22, "max_temp": 200, "notes": "一般输气/输油管道，需配合防腐涂层和缓蚀剂"},
+    "stainless_316": {"pren": 25, "hrc_limit": 22, "max_temp": 60, "notes": "Cl- < 5000ppm，温度 > 60°C 有点蚀风险"},
+    "13cr": {"pren": 13, "hrc_limit": 22, "max_temp": 150, "notes": "抗CO2腐蚀良好，但H2S和Cl-耐受性有限"},
+    "super_13cr": {"pren": 17, "hrc_limit": 23, "max_temp": 175, "notes": "添加Mo/Ni改性，抗Cl-和H2S优于普通13Cr"},
+    "duplex_2205": {"pren": 35, "hrc_limit": 28, "max_temp": 230, "notes": "H2S < 0.2MPa，Cl- < 10000ppm，温度限制170-230°C"},
+    "duplex_2507": {"pren": 42, "hrc_limit": 32, "max_temp": 250, "notes": "超级双相钢，PREN > 42，抗点蚀优于2205"},
+    "alloy_825": {"pren": 31, "hrc_limit": 35, "max_temp": 540, "notes": "镍铁基合金，高H2S/高Cl-环境关键部位"},
+    "alloy_625": {"pren": 41, "hrc_limit": 35, "max_temp": 650, "notes": "镍基高温合金，优异抗全面腐蚀和局部腐蚀性能"},
+    "alloy_c276": {"pren": 51, "hrc_limit": 45, "max_temp": 700, "notes": "镍钼铬合金，耐强酸/湿氯/氧化性介质，成本极高"},
+    "titanium": {"pren": 99, "hrc_limit": 36, "max_temp": 300, "notes": "海水/化工环境几乎免疫，成本极高，加工困难"},
 }
 
 
@@ -34,7 +63,9 @@ def generate_corrosion_data(n_samples=500, random_state=42):
     """
     rng = np.random.RandomState(random_state)
 
-    materials = rng.choice(MATERIALS, size=n_samples, p=[0.5, 0.25, 0.15, 0.10])
+    materials = rng.choice(MATERIALS, size=n_samples, p=[
+        0.30, 0.15, 0.12, 0.08, 0.08, 0.06, 0.06, 0.06, 0.05, 0.04
+    ])
     temperature = rng.uniform(20, 120, n_samples)
     ph = rng.uniform(3.5, 9.0, n_samples)
     co2_pressure = rng.uniform(0.01, 5.0, n_samples)
@@ -81,7 +112,8 @@ def generate_corrosion_data(n_samples=500, random_state=42):
 
         # 添加随机噪声 (±15%)
         cr *= rng.uniform(0.85, 1.15)
-        cr = max(0.001, cr)
+        # 工程实际上限：腐蚀速率 > 10 mm/a 时管道会在数月内穿孔
+        cr = min(max(0.001, cr), 10.0)
         corrosion_rates.append(cr)
 
     corrosion_rates = np.array(corrosion_rates)
@@ -149,10 +181,16 @@ def get_risk_level(corrosion_rate):
 def get_material_recommendation(risk_level, material):
     """根据风险等级和管材给出材料升级建议"""
     upgrades = {
-        "carbon_steel": "考虑升级为 316 不锈钢或内衬防腐涂层",
-        "stainless_316": "考虑升级为 825 合金或双相不锈钢 2205",
-        "alloy_825": "当前材料等级较高，重点关注焊接质量",
-        "duplex_2205": "当前材料等级较高，关注氯离子应力腐蚀开裂",
+        "carbon_steel": "考虑升级为 13Cr 不锈钢（抗CO2腐蚀）或 316 不锈钢 + 内衬防腐涂层",
+        "stainless_316": "考虑升级为 2205 双相不锈钢或 13Cr（抗CO2+Cl-环境）",
+        "13cr": "考虑升级为 超级13Cr（添加Mo改善Cl-耐受性）或 2205 双相不锈钢",
+        "super_13cr": "考虑升级为 2507 超级双相不锈钢或 825 合金",
+        "duplex_2205": "考虑升级为 2507 超级双相不锈钢（PREN > 42）或 625 合金",
+        "duplex_2507": "考虑升级为 625 合金或 C-276 合金（极端腐蚀环境）",
+        "alloy_825": "考虑升级为 625 合金（更高PREN和温度上限）",
+        "alloy_625": "当前材料等级极高，重点关注焊接质量和异金属电偶腐蚀",
+        "alloy_c276": "当前材料为最高等级耐蚀合金，无需升级",
+        "titanium": "当前材料几乎免疫腐蚀，重点关注成本效益和加工质量",
     }
     if risk_level in ["高风险", "严重风险"]:
         return upgrades.get(material, "建议咨询材料工程师进行升级评估。")
