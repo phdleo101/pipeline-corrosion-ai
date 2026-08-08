@@ -91,6 +91,41 @@ def create_dataset(base_url, api_key, name, description):
     return r.json()
 
 
+def list_documents(base_url, api_key, dataset_id):
+    """列出某知识库的全部文档, 返回 list"""
+    out = []
+    page = 1
+    while True:
+        r = requests.get(
+            f"{base_url}/datasets/{dataset_id}/documents",
+            headers=_headers(api_key),
+            params={"page": page, "limit": 100},
+            timeout=(10, 30),
+        )
+        r.raise_for_status()
+        data = r.json().get("data", [])
+        out.extend(data)
+        total_pages = r.json().get("total_pages", 1)
+        if page >= total_pages or not data:
+            break
+        page += 1
+    return out
+
+
+def delete_document(base_url, api_key, dataset_id, doc_id):
+    r = requests.delete(
+        f"{base_url}/datasets/{dataset_id}/documents/{doc_id}",
+        headers=_headers(api_key),
+        timeout=(10, 30),
+    )
+    r.raise_for_status()
+    # Dify DELETE 常返回 204 空 body, 不能 json() 解析
+    try:
+        return r.json()
+    except ValueError:
+        return {"status": "deleted", "id": doc_id}
+
+
 def upload_document(base_url, api_key, dataset_id, file_path, indexing_technique):
     """按文件创建文档(自动匹配 v2/v1 端点)"""
     with open(file_path, "rb") as f:
@@ -134,6 +169,8 @@ def main():
     parser.add_argument("--dataset-id", default=None, help="指定知识库 ID (跳过自动匹配)")
     parser.add_argument("--list-only", action="store_true", help="仅列出知识库")
     parser.add_argument("--economy", action="store_true", help="使用 economy 索引(免嵌入模型)")
+    parser.add_argument("--refresh", action="store_true",
+                        help="上传前先删除知识库里同名旧文档(避免重复堆积)")
     args = parser.parse_args()
 
     if not args.api_key:
@@ -178,6 +215,25 @@ def main():
         print(f"✅ 使用知识库: {target.get('name')} ({target.get('id')})")
 
     dataset_id = target.get("id")
+
+    # 刷新模式: 删除同名旧文档
+    if args.refresh:
+        try:
+            existing = list_documents(args.base_url, args.api_key, dataset_id)
+            base_names = {os.path.basename(fp) for fp in FILES_TO_UPLOAD}
+            to_delete = [d for d in existing if d.get("name") in base_names]
+            if to_delete:
+                print(f"\n🧹 刷新模式: 删除 {len(to_delete)} 个同名旧文档...")
+                for d in to_delete:
+                    try:
+                        delete_document(args.base_url, args.api_key, dataset_id, d.get("id"))
+                        print(f"   🗑️ 已删除: {d.get('name')} ({d.get('id')})")
+                    except Exception as e:
+                        print(f"   ⚠️ 删除失败 {d.get('name')}: {e}")
+            else:
+                print("\n🧹 刷新模式: 无同名旧文档, 直接上传。")
+        except Exception as e:
+            print(f"⚠️ 列出/删除旧文档失败(继续上传): {e}")
 
     # 上传文件
     for fp in FILES_TO_UPLOAD:

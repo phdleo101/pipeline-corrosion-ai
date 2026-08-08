@@ -165,3 +165,30 @@
 - 重新生成 `models/corrosion_predictor.pkl` 为纯 scikit-learn `GradientBoostingRegressor`（R²=0.8905），移除对未列入 requirements 的 xgboost 的依赖，确保 Streamlit Cloud 部署可加载
 
 > P3 三项的验证：Streamlit `AppTest` 全脚本无异常通过；SCC 形态/MIC ML/标定三个入口均渲染正常，MIC 预测按钮执行无误。
+
+---
+
+## 六、第四批（P4，已落地 ✅）：更多管线类型 / 腐蚀因素 / NDT 知识 / ML 扩展 / 后果与维护建议
+
+### 6.1 管线类型预设（覆盖更多管线类型与腐蚀因素）
+- 新增 `src/pipeline_types.py`：`PIPELINE_PRESETS` 含 **10 类管线**（天然气长输/原油/成品油/集输/注水注气/海底/城市燃气/化工工艺/酸性气田/输水/氢气掺氢），每类给出默认材料、主导腐蚀威胁、典型 CO₂/H₂S/Cl⁻/流速/温度范围、环境说明。
+- UI：Tab1「腐蚀预测」点选管线类型并"套用典型工况"一键载入参数；Tab5「腐蚀环境分析」关联管线类型聚焦主导环境威胁。
+
+### 6.2 NDT 无损检测知识模块
+- 新增 `src/ndt_knowledge.py`：`NDT_METHODS`（11 种 NDT 方法结构化知识）、`ILI_THREAT_MAP`（威胁→ILI 工具映射）、`recommend_ndt()`（依据威胁/可检性/策略侧重推荐 MFL/UT-CD 组合 + ECDA/ICDA/SCCDA 路径）。
+- UI：新增顶层 Tab9「🔍 无损检测(NDT)」——ILI 选型 + NDT 方法卡片 + API 1163(POD/POI/尺寸精度)。
+
+### 6.3 后果分析与分场景维护建议引擎
+- 新增 `src/consequence_remediation.py`：
+  - `consequence_analysis()`：依据管线类型/管径/压力/介质/位置/壁损评估泄漏后果等级（含近似释放量）。
+  - `recommend_remediation()`：覆盖 **7 类威胁**（CO₂内腐蚀/H₂S开裂/外部腐蚀/SCC/MIC/冲蚀/电偶腐蚀）的立即措施·工程修复(按严重度)·监测·标准依据·B31G 临界提示·优先级(P0–P3)。
+- UI：Tab1 预测后展开「🎯 后果分析与维护建议」面板，联动管线类型与预测风险等级。
+
+### 6.4 ML 模型扩展
+- `corrosion_model.train_multiple_models()` 新增 **MLP(神经网络)、SVR(支持向量)、可选 XGBoost、Voting 集成**，Tab3「模型对比」现对比 7+ 种算法（R²/MAE/RMSE）。
+
+### 6.5 知识库扩充（Dify 推送）
+- `data/standards/research_references.md` 增补：CER/CEPA/EPRG/DNV/Pipeline Safety Trust/NIST MPD-WebSCD/MatWeb/DECHEMA/NIMS/corrdata/NACE IMPACT 成本研究/GB-T 29780 等数据库；API 1163(第3版)/ASME B31.8S/NACE SP0502/API 1104/PRCI 等 NDT 与完整性标准；管线类型↔主导威胁预设映射。
+- 推送脚本 `scripts/push_to_dify_kb.py` 增加 `--refresh`（先删同名旧文档再上传，避免重复），已推送到两个 KB（high_quality 专用库 + economy 应用关联库）。
+
+> P4 验证：Streamlit `AppTest` 全脚本无异常；管线类型套用、NDT 选型、后果+维护建议联动均通过；知识库刷新无重复文档。

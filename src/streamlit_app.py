@@ -42,6 +42,9 @@ from mic_ml import (
 from data_calibration import (
     sample_template_df, demo_synthetic_df, parse_uploaded_csv, calibrate_with_data,
 )
+from pipeline_types import get_pipeline_presets, get_preset
+from ndt_knowledge import NDT_METHODS, recommend_ndt, ILI_THREAT_MAP
+from consequence_remediation import consequence_analysis, recommend_remediation
 from styles import apply_theme
 
 # ----------------------
@@ -85,7 +88,8 @@ with st.sidebar:
     - [完整性工具](#tab4)
     - [腐蚀环境分析](#tab5)
     - [机理与模型](#tab6)
-    - [实测数据标定](#tab8)
+    - [🔍 无损检测(NDT)](#tab9)
+    - [📡 实测数据标定](#tab8)
     - [关于](#tab7)
     """)
     st.markdown("---")
@@ -99,7 +103,7 @@ I18N = {
     "中文": {
         "title": "🔧 管道腐蚀预测与标准问答系统",
         "subtitle": "Pipeline Corrosion Prediction & Standards Q&A",
-        "tabs": ["📊 腐蚀预测", "💬 标准问答", "📈 数据探索", "🔧 完整性工具", "🌍 腐蚀环境分析", "🧪 机理与模型", "📡 实测数据标定", "ℹ️ 关于"],
+        "tabs": ["📊 腐蚀预测", "💬 标准问答", "📈 数据探索", "🔧 完整性工具", "🌍 腐蚀环境分析", "🧪 机理与模型", "🔍 无损检测(NDT)", "📡 实测数据标定", "ℹ️ 关于"],
         "input_params": "输入管道参数",
         "predict_btn": "🔍 预测腐蚀速率",
         "compare_btn": "📊 对比材料",
@@ -120,7 +124,7 @@ I18N = {
     "English": {
         "title": "🔧 Pipeline Corrosion Prediction & Standards Q&A",
         "subtitle": "AI-Powered Corrosion Management",
-        "tabs": ["📊 Prediction", "💬 Q&A", "📈 Data Explorer", "🔧 Integrity Tools", "🌍 Env. Analysis", "🧪 Mechanisms", "📡 Calibration", "ℹ️ About"],
+        "tabs": ["📊 Prediction", "💬 Q&A", "📈 Data Explorer", "🔧 Integrity Tools", "🌍 Env. Analysis", "🧪 Mechanisms", "🔍 NDT", "📡 Calibration", "ℹ️ About"],
         "input_params": "Input Parameters",
         "predict_btn": "🔍 Predict Corrosion Rate",
         "compare_btn": "📊 Compare Materials",
@@ -181,6 +185,17 @@ MATERIAL_CHOICES = {
     "C-276合金 (Hastelloy C-276)": "alloy_c276",
     "钛合金 (Titanium Gr.2)": "titanium",
 }
+MATERIAL_CHOICES_REVERSE = {v: k for k, v in MATERIAL_CHOICES.items()}
+
+# 管线类型 → 介质（用于后果分析释放说明）
+PIPELINE_PRODUCT = {
+    "gas_transmission": "天然气", "city_gas": "天然气", "hydrogen": "天然气",
+    "oil_transmission": "原油", "gathering": "原油", "subsea": "原油",
+    "water_injection": "注水", "water_supply": "海水",
+    "chemical": "化工介质", "sour_gas": "天然气",
+}
+# 风险等级 → 维护建议严重度
+RISK_TO_SEVERITY = {"低风险": "低", "中风险": "中", "高风险": "高", "严重风险": "严重"}
 
 RISK_STYLES = {
     "低风险": ("#27ae60", "🟢"),
@@ -232,7 +247,7 @@ if st.query_params.get("shared") == "1":
 # ----------------------
 # 选项卡
 # ----------------------
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(T["tabs"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs(T["tabs"])
 
 # ======================
 # Tab 1: 腐蚀预测 (增强版)
@@ -243,15 +258,36 @@ with tab1:
     with col_input:
         st.markdown(f"### {T['input_params']}")
 
-        material_label = st.selectbox("管材类型 / Material", options=list(MATERIAL_CHOICES.keys()))
+        # 管线类型预设（联动典型工况与主导威胁）
+        presets = get_pipeline_presets()
+        ptype_label = st.selectbox("管线类型 / Pipeline Type", options=list(presets.keys()),
+                                   format_func=lambda k: presets[k], key="pt_type")
+        ptype = ptype_label
+        preset = get_preset(ptype)
+
+        if st.button("📋 套用该类型典型工况", width="stretch", key="apply_preset"):
+            ps = preset["env"]
+            st.session_state["pt_temp"] = int(round(ps["temp"]))
+            st.session_state["pt_ph"] = float(ps["ph"])
+            st.session_state["pt_co2"] = float(ps["co2_pressure"])
+            st.session_state["pt_h2s"] = int(round(ps["h2s"]))
+            st.session_state["pt_flow"] = float(ps["flow"])
+            st.session_state["pt_cl"] = int(round(ps["chloride"]))
+            dm = MATERIAL_CHOICES_REVERSE.get(preset["default_material"])
+            if dm:
+                st.session_state["pt_mat"] = dm
+            st.toast(f"已套用「{preset['label']}」典型工况，主导威胁：{('、'.join(preset['dominant_threats']))}")
+
+        material_label = st.selectbox("管材类型 / Material", options=list(MATERIAL_CHOICES.keys()),
+                                      key="pt_mat")
         material = MATERIAL_CHOICES[material_label]
 
-        temperature = st.slider("温度 Temperature (°C)", 0, 150, 80, step=1)
-        ph = st.slider("pH 值", 3.0, 10.0, 6.0, step=0.1)
-        co2_pressure = st.slider("CO2 分压 (MPa)", 0.0, 10.0, 1.0, step=0.1)
-        h2s_concentration = st.slider("H2S 浓度 (ppm)", 0, 1000, 50, step=10)
-        flow_rate = st.slider("流速 Flow Rate (m/s)", 0.0, 10.0, 3.0, step=0.1)
-        chloride_content = st.slider("氯离子 Cl- (ppm)", 0, 100000, 5000, step=500)
+        temperature = st.slider("温度 Temperature (°C)", 0, 150, 80, step=1, key="pt_temp")
+        ph = st.slider("pH 值", 3.0, 10.0, 6.0, step=0.1, key="pt_ph")
+        co2_pressure = st.slider("CO2 分压 (MPa)", 0.0, 10.0, 1.0, step=0.1, key="pt_co2")
+        h2s_concentration = st.slider("H2S 浓度 (ppm)", 0, 1000, 50, step=10, key="pt_h2s")
+        flow_rate = st.slider("流速 Flow Rate (m/s)", 0.0, 10.0, 3.0, step=0.1, key="pt_flow")
+        chloride_content = st.slider("氯离子 Cl- (ppm)", 0, 100000, 5000, step=500, key="pt_cl")
 
         col_btn1, col_btn2 = st.columns([2, 1])
         with col_btn1:
@@ -326,6 +362,40 @@ with tab1:
             st.markdown(f"#### 📋 {T['suggestion']}")
             st.info(result["suggestion"])
             st.markdown(f"**🔧 {T['material_advice']}**: {result['material_advice']}")
+
+            # ===== 后果分析与维护建议（依据管线类型 + 预测结果）=====
+            with st.expander("🎯 后果分析与维护建议", expanded=False):
+                st.caption(f"管线类型：**{preset['label']}** ｜ 主导威胁：{('、'.join(preset['dominant_threats']))} ｜ 介质危险：{preset['product_hazard']}")
+                cc1, cc2, cc3, cc4 = st.columns(4)
+                dia = cc1.slider("管径 (mm)", 50, 1400, 500, 10, key="cons_dia")
+                pres = cc2.slider("操作压力 (MPa)", 0.1, 15.0, 6.0, 0.1, key="cons_pres")
+                loc = cc3.selectbox("位置类型", ["一般区域", "人口密集区(HCA)", "水体/环境敏感区", "荒野"], key="cons_loc")
+                wloss = cc4.slider("最大壁损 (%)", 0, 100, 20, 1, key="cons_wloss")
+
+                sev = RISK_TO_SEVERITY.get(result["risk_level"], "中")
+                product = PIPELINE_PRODUCT.get(ptype, "天然气")
+                cons = consequence_analysis(ptype, dia, pres, product, loc, wloss)
+
+                st.markdown(
+                    f"**后果等级：** <span style='color:{cons['color']};font-weight:700;'>【{cons['level']}】</span> （综合评分 {cons['score']}）",
+                    unsafe_allow_html=True,
+                )
+                st.info(cons["summary"] + "  " + cons["release_note"])
+
+                threat_opts = list(dict.fromkeys(
+                    preset["dominant_threats"] + ["CO₂内腐蚀", "H₂S开裂", "外部腐蚀", "SCC", "MIC", "冲蚀", "电偶腐蚀"]
+                ))
+                threat = st.selectbox("选择需给出维护建议的威胁", threat_opts, key="rem_threat")
+                rem = recommend_remediation(threat, sev, ptype, wloss, material)
+                st.markdown(f"**优先级：** `{rem['priority']}` ｜ 威胁：{rem['threat']}")
+                st.warning(rem["b31g_note"])
+                st.markdown("**🚑 立即措施：**")
+                for it in rem["immediate"]:
+                    st.markdown(f"- {it}")
+                st.markdown(f"**🛠️ 工程修复（{sev}级）：** {rem['repair']}")
+                st.markdown(f"**🔎 监测方案：** {rem['monitor']}")
+                st.markdown(f"**📚 标准依据：** {rem['standard']}")
+                st.caption(rem["pipeline_context"] + "  " + rem["reference"])
 
             # 导出按钮
             export_df = pd.DataFrame([{
@@ -770,7 +840,7 @@ with tab3:
     # --- 模型对比 ---
     with sub_tab4:
         st.markdown(f"#### {T['model_comparison']}")
-        st.caption("训练 4 种算法并对比性能指标，展示模型选型决策过程")
+        st.caption("训练 7+ 种算法（GBR/RF/DT/LR/MLP/SVR/XGBoost/投票集成）对比性能指标，展示模型选型决策过程")
 
         comparison = get_model_comparison()
 
@@ -810,8 +880,10 @@ with tab3:
         st.plotly_chart(fig_mae, width="stretch")
 
         st.info("""
-        **📌 选型决策**：GradientBoosting 在 R² 和 MAE 上均表现最优，选择作为生产模型。
-        RandomForest 紧随其后，LinearRegression 表现最差（腐蚀速率与特征间为非线性关系）。
+        **📌 选型决策**：GradientBoosting 与 VotingEnsemble 在 R² 和 MAE 上均表现最优，
+        生产模型选用 GradientBoosting（R²≈0.89）。RandomForest 紧随其后；
+        MLP/SVR 在非线性映射上有潜力但需更多数据与调参；LinearRegression 表现最差
+        （腐蚀速率与特征间为强非线性关系）。XGBoost 在已安装环境下可用作对比基准。
         """)
 
 # ======================
@@ -852,7 +924,7 @@ with tab7:
     - 数据集统计概览与预览
     - 分布分析（直方图 + 箱线图）
     - 相关性热力图 + 特征重要性
-    - 多模型对比（GBR / RF / DT / LR）
+    - 多模型对比（GBR / RF / DT / LR / MLP / SVR / XGBoost / 投票集成，7+ 种）
 
     **6. 腐蚀环境分析模块**
     - 多环境腐蚀模型：土壤（DIN 50929 思路）/海水/微生物(MIC)/电偶腐蚀的简化速率估算
@@ -866,6 +938,14 @@ with tab7:
     - 应力腐蚀开裂(SCC)敏感性筛查(NACE SP0204)：高 pH / 近中性 pH 两类机理
     - 点蚀抗力当量 PREN：不锈钢/双相钢/镍基合金抗氯离子点蚀能力对比
 
+    **8. 无损检测(NDT)与后果·维护模块**
+    - NDT/ILI 知识库：11 种 NDT 方法（MFL/UT-CD/EMAT/Caliper/PAUT/RT/MT/PT/ET/导波/AE）原理/可检缺陷/灵敏度/标准
+    - ILI 工具选型：依据主导威胁与管线可检性推荐 MFL/UT-CD 组合 + ECDA/ICDA/SCCDA 直接评估路径
+    - API 1163 第3版 POD/POI/尺寸精度量化概念与"组合 run"最佳实践
+    - 后果分析：依据管线类型/管径/压力/介质/位置/壁损评估泄漏后果等级
+    - 分场景维护建议：覆盖 CO₂内腐蚀/H₂S开裂/外部腐蚀/SCC/MIC/冲蚀/电偶腐蚀 7 类威胁的立即措施·工程修复·监测·标准依据
+    - 管线类型预设：10 类管线（长输/集输/注水/海底/城市燃气/化工/酸性气田/输水/掺氢等）联动典型工况与主导威胁
+
     **📚 研究资料与公开数据源**
     - 管线腐蚀痛点、PHMSA/PRCI/EGIG/CONCAWE/NTSB/NIST/NETL 等公开数据库、关键论文与标准引用见 `data/standards/research_references.md`
     - 中国标准条款级细分（防腐层厚度 / 阴极保护电位 / 评价等级 / 设计系数等数值阈值）见 `data/standards/china_standards_clauses.md`
@@ -875,7 +955,7 @@ with tab7:
     | 组件 | 技术 |
     |------|------|
     | Web 界面 | Streamlit + Plotly |
-    | 预测模型 | scikit-learn (GradientBoosting / RandomForest / DecisionTree / LinearRegression) |
+    | 预测模型 | scikit-learn (GradientBoosting / RandomForest / DecisionTree / LinearRegression / MLP / SVR / VotingEnsemble) + 可选 XGBoost |
     | RAG 引擎 | Dify Cloud API (Streaming) + LangChain |
     | 部署平台 | Streamlit Community Cloud |
     | 版本控制 | GitHub |
@@ -1065,6 +1145,13 @@ with tab5:
     with env_tab1:
         st.markdown("#### 多环境腐蚀速率估算")
         st.markdown("选择腐蚀环境类型，输入关键参数估算腐蚀速率与严重程度。公式为工程简化估算，正式评估以现场检测为准。")
+
+        # 管线类型上下文（聚焦主导环境威胁）
+        ptype_ctx = st.selectbox("关联管线类型（用于聚焦主导环境威胁）",
+                                 list(get_pipeline_presets().keys()),
+                                 format_func=lambda k: get_pipeline_presets()[k], key="env_ptype")
+        pctx = get_preset(ptype_ctx)
+        st.info(f"「{pctx['label']}」主导腐蚀威胁：{('、'.join(pctx['dominant_threats']))}。{pctx['typical']}")
 
         env_type = st.selectbox("环境类型", ["土壤腐蚀", "海水腐蚀", "微生物腐蚀(MIC)", "电偶腐蚀"], key="env_type")
 
@@ -1598,7 +1685,7 @@ with tab8:
             st.success(f"已生成合成 demo {df.shape[0]} 行")
 
     if df is not None:
-        st.dataframe(df.head(10), use_container_width=True)
+        st.dataframe(df.head(10), width="stretch")
         num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
         target = st.selectbox("选择目标列（待预测）", num_cols, index=max(0, len(num_cols) - 1), key="tab8_target")
         auto_feats = [c for c in num_cols if c != target]
@@ -1638,8 +1725,71 @@ with tab8:
     st.markdown("#### 📥 模板下载")
     tpl = sample_template_df()
     st.markdown("CSV 需含数值特征列与一列目标（数值=腐蚀速率回归；低基数类别=风险分类）。示例如下：")
-    st.dataframe(tpl, use_container_width=True)
+    st.dataframe(tpl, width="stretch")
     csv_tpl = tpl.to_csv(index=False).encode("utf-8")
     st.download_button("下载模板 CSV", csv_tpl, "mic_calibration_template.csv", "text/csv", key="tab8_dl")
+
+# ======================
+# Tab 9: 无损检测 NDT (P4 增强)
+# ======================
+with tab9:
+    st.markdown("### 🔍 无损检测 (NDT) 与内检测 (ILI) 知识库")
+    st.markdown("""
+    管道完整性管理的**检测闭环**：建设期焊接检测(PAUT/RT) → 在役内检测(MFL/UT-CD/EMAT/Caliper)
+    → 不可检段直接评估(ECDA/ICDA/SCCDA) → 开挖验证(MT/PT/UT)。本页依据威胁类型给出 ILI 工具选型，
+    并提供 11 种 NDT 方法的工程知识卡片与 API 1163 性能量化概念。
+    """)
+
+    # --- 1. ILI 工具选型 ---
+    st.markdown("#### 🛰️ 内检测 (ILI) 工具选型建议")
+    ndt_options = list(ILI_THREAT_MAP.keys()) + ["金属损失/腐蚀", "裂纹/开裂", "几何变形"]
+    ndt_threat = st.selectbox("选择主导威胁 / 缺陷类型", ndt_options, key="ndt_threat")
+    col_p1, col_p2 = st.columns(2)
+    with col_p1:
+        piggable = st.toggle("管线可内检测（有收发球筒/可通过）", value=True, key="ndt_pig")
+    with col_p2:
+        prio = st.selectbox("策略侧重", ["balanced", "metal_loss", "crack"],
+                            format_func=lambda x: {"balanced": "均衡", "metal_loss": "偏金属损失", "crack": "偏裂纹"}[x],
+                            key="ndt_prio")
+
+    rec_threat = ndt_threat if ndt_threat in ILI_THREAT_MAP else None
+    rec_defects = [ndt_threat] if ndt_threat not in ILI_THREAT_MAP else None
+    rec = recommend_ndt(threat=rec_threat, defect_types=rec_defects, piggable=piggable, priority=prio)
+
+    st.markdown("**推荐检测工具（按优先级）：**")
+    for m in rec["methods"]:
+        st.markdown(f"{m['rank']}. **{m['name']}** — {m['reason']}")
+    st.divider()
+    st.markdown("**直接评估 / 验证路径：**")
+    for d in rec["direct_assessment"]:
+        st.markdown(f"- {d}")
+    st.info("💡 " + rec["note"])
+
+    # --- 2. NDT 方法知识库 ---
+    st.markdown("#### 📚 NDT 方法知识库（点击展开）")
+    for code, m in NDT_METHODS.items():
+        with st.expander(m["name"]):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown(f"**原理：** {m['principle']}")
+                st.markdown(f"**可检缺陷：** {('、'.join(m['detects']))}")
+            with c2:
+                st.markdown(f"**灵敏度/性能：** {m['sensitivity']}")
+                st.markdown(f"**局限：** {m['limitations']}")
+            st.markdown(f"**典型用途：** {m['use']}")
+            st.caption(f"📚 标准：{m['standard']}")
+
+    # --- 3. API 1163 性能量化 ---
+    st.markdown("#### 📏 ILI 性能量化（API 1163 第 3 版, 2021）")
+    st.markdown("""
+    API 1163 要求 ILI 系统以三类指标**量化性能**，避免"单一工具盲区"误判：
+    - **POD（检出概率）**：如金属损失深度阈值 10%t、POD=90%（即能检出 90% 达阈值的缺陷）。
+    - **POI（识别概率）**：如孤立裂纹深度阈值 1 mm、POI=90%（正确识别为裂纹类）。
+    - **尺寸精度**：如深度 ±10%t @ 80% 置信（80% 情况下报告深度与真值偏差 ≤ 10% 壁厚）。
+
+    ⚠️ **最佳实践**：MFL 对金属损失灵敏但对轴向裂纹几乎盲区；UT-CD 对裂纹灵敏但常漏全面腐蚀。
+    对威胁谱宽的管线，应在同一窗口**组合 run（MFL + UT-CD）**，成本翻倍、威胁覆盖率提升数倍
+    （PHMSA §192.937 明确允许）。验证(verification)与确认(validation)为 API 1163 两个独立步骤。
+    """)
 
 # ======================

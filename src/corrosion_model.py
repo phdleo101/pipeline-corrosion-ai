@@ -10,9 +10,13 @@ import os
 import pickle
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.ensemble import (
+    GradientBoostingRegressor, RandomForestRegressor, VotingRegressor,
+)
 from sklearn.linear_model import LinearRegression
 from sklearn.tree import DecisionTreeRegressor
+from sklearn.neural_network import MLPRegressor
+from sklearn.svm import SVR
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 
@@ -244,7 +248,33 @@ class CorrosionPredictor:
                 max_depth=8, random_state=42
             ),
             "LinearRegression": LinearRegression(),
+            "MLP(神经网络)": MLPRegressor(
+                hidden_layer_sizes=(64, 32), max_iter=2000,
+                alpha=1e-4, random_state=42, early_stopping=True,
+            ),
+            "SVR(支持向量)": SVR(kernel="rbf", C=10.0, gamma="scale", epsilon=0.1),
         }
+
+        # 可选 XGBoost（部署环境可能未安装，缺失时跳过）
+        try:
+            from xgboost import XGBRegressor
+            models["XGBoost"] = XGBRegressor(
+                n_estimators=200, max_depth=5, learning_rate=0.1,
+                random_state=42, verbosity=0,
+            )
+        except Exception:
+            pass
+
+        # 投票集成（GBR + RF + MLP）：降低方差、提升稳健性
+        ensemble = VotingRegressor(
+            estimators=[
+                ("gbr", models["GradientBoosting"]),
+                ("rf", models["RandomForest"]),
+                ("mlp", models["MLP(神经网络)"]),
+            ],
+            n_jobs=-1,
+        )
+        models["VotingEnsemble"] = ensemble
 
         results = {}
         for name, model in models.items():
