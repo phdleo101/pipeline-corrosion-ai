@@ -45,6 +45,7 @@ from data_calibration import (
 from pipeline_types import get_pipeline_presets, get_preset
 from ndt_knowledge import NDT_METHODS, recommend_ndt, ILI_THREAT_MAP
 from consequence_remediation import consequence_analysis, recommend_remediation
+from industrial_scenarios import get_industrial_scenarios, scenario_keys_in_order
 from styles import apply_theme
 
 # ----------------------
@@ -88,9 +89,9 @@ with st.sidebar:
     - [完整性工具](#tab4)
     - [腐蚀环境分析](#tab5)
     - [机理与模型](#tab6)
-    - [🔍 无损检测(NDT)](#tab9)
+    - [🔍 无损检测(NDT)](#tab7)
     - [📡 实测数据标定](#tab8)
-    - [关于](#tab7)
+    - [关于](#tab9)
     """)
     st.markdown("---")
     st.caption("MIT License")
@@ -168,6 +169,178 @@ def get_dataset():
 def get_model_comparison():
     p = CorrosionPredictor()
     return p.train_multiple_models()
+
+
+@st.cache_data
+def get_trained_models_full():
+    """训练全部模型并缓存 (results, scaler, le, feature_cols)，供多模型逐样本对比。"""
+    p = CorrosionPredictor()
+    return p.train_all_full()
+
+
+# 全部可用模型名称（用于多模型选择）
+ALL_MODEL_NAMES = [
+    "GradientBoosting", "RandomForest", "DecisionTree", "LinearRegression",
+    "MLP(神经网络)", "SVR(支持向量)", "XGBoost", "VotingEnsemble",
+]
+
+
+def predict_multi_models(full, names, material, inputs):
+    """对当前输入用多个模型分别预测腐蚀速率。"""
+    results, scaler, le, feature_cols = full
+    mat_enc = le.transform([material])[0]
+    feat = np.array([[
+        mat_enc, inputs["temperature"], inputs["ph"], inputs["co2_pressure"],
+        inputs["h2s_concentration"], inputs["flow_rate"], inputs["chloride_content"],
+    ]], dtype=float)
+    Xs = scaler.transform(feat)
+    out = {}
+    for n in names:
+        if n in results:
+            try:
+                out[n] = max(0.001, float(results[n]["model"].predict(Xs)[0]))
+            except Exception:
+                out[n] = None
+    return {k: v for k, v in out.items() if v is not None}
+
+
+def _risk_band(rate):
+    if rate < 0.1:
+        return "低风险", "#27ae60"
+    elif rate < 0.5:
+        return "中风险", "#f39c12"
+    elif rate < 1.0:
+        return "高风险", "#e74c3c"
+    else:
+        return "严重风险", "#c0392b"
+
+
+def render_multi_model_compare(full, names, material, inputs, dark_mode,
+                               header="🤖 多模型机器学习对比", key_prefix="mm"):
+    """渲染多模型对比：逐模型预测柱状图 + 指标表 + 共识与离散度解读。"""
+    if not names:
+        st.warning("请至少选择一个机器学习模型。")
+        return
+    preds = predict_multi_models(full, names, material, inputs)
+    if not preds:
+        st.error("所选模型均无法完成预测，请重新选择。")
+        return
+    results, scaler, le, feature_cols = full
+
+    st.markdown(f"#### {header}")
+    fig = go.Figure(go.Bar(
+        x=list(preds.keys()),
+        y=list(preds.values()),
+        marker_color=[_risk_band(v)[1] for v in preds.values()],
+        text=[f"{v:.3f}" for v in preds.values()],
+        textposition="outside",
+    ))
+    fig.update_layout(
+        height=330, margin=dict(l=20, r=20, t=30, b=80),
+        yaxis_title="腐蚀速率 (mm/a)",
+        template="plotly_dark" if dark_mode else "plotly_white",
+    )
+    st.plotly_chart(fig, width="stretch", key=f"{key_prefix}_chart")
+
+    rows = []
+    for n in names:
+        if n in results:
+            rows.append({
+                "模型": n,
+                "R²": results[n]["r2"],
+                "MAE (mm/a)": results[n]["mae"],
+                "RMSE (mm/a)": results[n]["rmse"],
+                "本工况预测 (mm/a)": preds.get(n),
+            })
+    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+    vals = list(preds.values())
+    mean_v = sum(vals) / len(vals)
+    std_v = (sum((v - mean_v) ** 2 for v in vals) / len(vals)) ** 0.5
+    best = min((n for n in names if n in results), key=lambda n: results[n]["mae"])
+    c1, c2, c3 = st.columns(3)
+    c1.metric("模型共识 (均值)", f"{mean_v:.3f} mm/a")
+    c2.metric("离散度 (±1σ)", f"{std_v:.3f}")
+    c3.metric("最优模型 (最低MAE)", best)
+
+    lo, hi = min(vals), max(vals)
+    st.info(
+        f"📊 各模型预测区间 [{lo:.3f}, {hi:.3f}] mm/a，离散度 {std_v:.3f}。"
+        f"离散度越小代表模型共识越强、结果越可信；离散度较大（如线性模型与非线性模型分歧）时，"
+        f"建议结合机理模型与现场检测交叉验证。生产模型选用 GradientBoosting（R²/MAE 综合最优）。"
+    )
+
+
+def render_ndt_callout(threat=None, defect_types=None, piggable=True,
+                       priority="balanced", context="", expanded=False):
+    """在相关功能中嵌入 NDT/ILI 检测建议（不再仅作为独立知识库）。"""
+    rec = recommend_ndt(threat=threat, defect_types=defect_types, piggable=piggable, priority=priority)
+    with st.expander("🔬 推荐无损检测 (NDT / ILI)", expanded=expanded):
+        if context:
+            st.caption(context)
+        for m in rec["methods"][:3]:
+            st.markdown(f"**{m['rank']}. {m['name']}** — {m['reason']}")
+        if len(rec["methods"]) > 3:
+            st.markdown(f"_其余 {len(rec['methods']) - 3} 项工具与直接评估路径见『无损检测(NDT)』Tab。_")
+        st.info("💡 " + rec["note"])
+
+
+def render_scenario_analysis(dark_mode, default_ptype="gas_transmission", key_prefix="scn"):
+    """工业应用场景分析：腐蚀因素 + 多模型 ML 预测 + NDT 建议 + 分威胁解决措施。"""
+    scenarios = get_industrial_scenarios()
+    sel = st.selectbox("选择工业应用场景", scenario_keys_in_order(),
+                       format_func=lambda k: scenarios[k]["label"], key=f"{key_prefix}_sel")
+    sc = scenarios[sel]
+
+    st.markdown(f"**{sc['label']}**")
+    st.info(sc["description"])
+
+    # 腐蚀因素分析
+    st.markdown("**🔎 腐蚀因素分析**")
+    for f in sc["factors"]:
+        st.markdown(f"- {f}")
+
+    # 多模型 ML 预测（典型工况）
+    full = get_trained_models_full()
+    tp = sc["typical_params"]
+    inputs = {
+        "temperature": float(tp["temperature"]), "ph": float(tp["ph"]),
+        "co2_pressure": float(tp["co2_pressure"]), "h2s_concentration": float(tp["h2s_concentration"]),
+        "flow_rate": float(tp["flow_rate"]), "chloride_content": float(tp["chloride_content"]),
+    }
+    mat = tp["material"]
+    render_multi_model_compare(full, ALL_MODEL_NAMES, mat, inputs, dark_mode,
+                               header="🤖 机器学习模型预测（本场景典型工况，多模型对比）",
+                               key_prefix=f"{key_prefix}_mm")
+
+    # 基于多模型均值的预测风险等级，用于分威胁维护建议
+    preds = predict_multi_models(full, ALL_MODEL_NAMES, mat, inputs)
+    mean_rate = sum(preds.values()) / len(preds) if preds else 0.5
+    rl, _ = _risk_band(mean_rate)
+    sev = RISK_TO_SEVERITY.get(rl, "中")
+
+    # NDT 建议（融入，而非孤立知识库）
+    render_ndt_callout(threat=sc["ndt_threat"],
+                       context=f"场景「{sc['label']}」主导威胁：{('、'.join(sc['dominant_threats']))}；"
+                               f"预测风险等级 {rl}。",
+                       expanded=True)
+
+    # 解决措施概述
+    st.markdown("**🛠️ 解决措施概述**")
+    for s in sc["solutions"]:
+        st.markdown(f"- {s}")
+
+    # 分威胁详细维护建议
+    st.markdown("**📋 分威胁详细维护建议（依据预测风险等级）**")
+    for t in sc["dominant_threats"]:
+        rem = recommend_remediation(t, sev, default_ptype, 20, mat)
+        with st.expander(f"{rem['threat']} — 优先级 {rem['priority']}", expanded=False):
+            st.warning(rem["b31g_note"])
+            st.markdown("🚑 **立即措施：** " + "；".join(rem["immediate"]))
+            st.markdown(f"🛠️ **修复（{sev}级）：** {rem['repair']}")
+            st.markdown(f"🔎 **监测方案：** {rem['monitor']}")
+            st.caption(rem["standard"] + "  " + rem["pipeline_context"])
+
 
 predictor = get_predictor()
 rag = get_rag()
@@ -489,6 +662,33 @@ with tab1:
                 else:
                     st.success("✅ 腐蚀速率极低（<0.001 mm/a），剩余寿命可视为无限期，按常规周期监测即可。")
 
+            # ===== 多模型机器学习对比（预测后可选）=====
+            with st.expander("🤖 多模型机器学习对比（可多选）", expanded=False):
+                st.caption("选择多个机器学习模型，对**当前工况**分别预测并对比，识别模型共识与分歧。")
+                full_models = get_trained_models_full()
+                default_models = ["GradientBoosting", "RandomForest", "VotingEnsemble"]
+                sel_models = st.multiselect(
+                    "选择参与对比的模型", options=ALL_MODEL_NAMES,
+                    default=[m for m in default_models if m in ALL_MODEL_NAMES],
+                    key="mm_models",
+                )
+                inputs_now = {
+                    "temperature": float(temperature), "ph": float(ph),
+                    "co2_pressure": float(co2_pressure), "h2s_concentration": float(h2s_concentration),
+                    "flow_rate": float(flow_rate), "chloride_content": float(chloride_content),
+                }
+                if st.button("🚀 运行多模型对比", key="mm_run", width="stretch"):
+                    render_multi_model_compare(full_models, sel_models, material, inputs_now, dark_mode,
+                                               key_prefix="mm_tab1")
+
+            # ===== NDT 检测建议（融合到预测结果）=====
+            render_ndt_callout(
+                threat=preset["dominant_threats"][0] if preset["dominant_threats"] else None,
+                context=f"「{preset['label']}」主导威胁：{('、'.join(preset['dominant_threats']))}；"
+                        f"当前预测风险等级 {result['risk_level']}。",
+                expanded=False,
+            )
+
             # 保存到预测历史
             if "prediction_history" not in st.session_state:
                 st.session_state["prediction_history"] = []
@@ -765,6 +965,23 @@ with tab3:
         st.markdown("##### 描述性统计")
         st.dataframe(dataset.describe().round(3), width="stretch")
 
+        # 风险等级分布
+        st.markdown("##### 风险等级分布")
+        risk_order = ["low", "medium", "high", "severe"]
+        risk_zh = {"low": "低风险", "medium": "中风险", "high": "高风险", "severe": "严重风险"}
+        risk_counts = dataset["risk_level"].value_counts().reindex(risk_order).fillna(0)
+        fig_risk = go.Figure(data=[go.Pie(
+            labels=[risk_zh[i] for i in risk_counts.index],
+            values=list(risk_counts.values),
+            hole=0.4, textinfo="label+percent", textfont={"size": 12},
+            marker_colors=["#27ae60", "#f39c12", "#e74c3c", "#c0392b"],
+        )])
+        fig_risk.update_layout(height=320, margin=dict(l=20, r=20, t=30, b=20),
+                               template="plotly_dark" if dark_mode else "plotly_white")
+        st.plotly_chart(fig_risk, width="stretch")
+        st.caption("📌 训练数据中各风险等级样本占比，反映模拟工况的分布特征；"
+                   "多模型对比与跨场景验证可提升预测对未见工况的泛化能力。")
+
     # --- 分布分析 ---
     with sub_tab2:
         st.markdown(f"#### {T['distribution']}")
@@ -879,6 +1096,28 @@ with tab3:
         fig_mae.update_layout(height=350, margin=dict(l=20, r=20, t=40, b=20))
         st.plotly_chart(fig_mae, width="stretch")
 
+        # 多模型特征重要性对比（树模型）—— 提升跨场景鲁棒性认知
+        st.markdown("##### 多模型特征重要性对比（树模型）")
+        st.caption("对比 GradientBoosting / RandomForest / DecisionTree 对各特征的重视程度。"
+                   "不同模型关注的特征权重不同，交叉印证可减少对单一模型偏好的依赖，提升应对不同场合的普遍性。")
+        _res = get_trained_models_full()[0]
+        _feat_names = ["材料", "温度", "pH", "CO₂分压", "H₂S", "流速", "Cl⁻"]
+        _imp_rows = []
+        for _mn in ["GradientBoosting", "RandomForest", "DecisionTree"]:
+            _m = _res.get(_mn, {}).get("model")
+            if _m is not None and hasattr(_m, "feature_importances_"):
+                _imps = _m.feature_importances_
+                for _i, _fn in enumerate(_feat_names):
+                    _imp_rows.append({"模型": _mn, "特征": _fn, "重要性": round(float(_imps[_i]), 4)})
+        if _imp_rows:
+            _df_imp = pd.DataFrame(_imp_rows)
+            fig_impc = px.bar(_df_imp, x="特征", y="重要性", color="模型", barmode="group",
+                              template="plotly_dark" if dark_mode else "plotly_white")
+            fig_impc.update_layout(height=350, margin=dict(l=20, r=20, t=30, b=20))
+            st.plotly_chart(fig_impc, width="stretch")
+        else:
+            st.warning("树模型特征重要性暂不可用。")
+
         st.info("""
         **📌 选型决策**：GradientBoosting 与 VotingEnsemble 在 R² 和 MAE 上均表现最优，
         生产模型选用 GradientBoosting（R²≈0.89）。RandomForest 紧随其后；
@@ -887,9 +1126,9 @@ with tab3:
         """)
 
 # ======================
-# Tab 7: 关于 (更新)
+# Tab 9: 关于 (更新)
 # ======================
-with tab7:
+with tab9:
     st.markdown("""
     ## 关于本系统
 
@@ -950,6 +1189,11 @@ with tab7:
     - 管线腐蚀痛点、PHMSA/PRCI/EGIG/CONCAWE/NTSB/NIST/NETL 等公开数据库、关键论文与标准引用见 `data/standards/research_references.md`
     - 中国标准条款级细分（防腐层厚度 / 阴极保护电位 / 评价等级 / 设计系数等数值阈值）见 `data/standards/china_standards_clauses.md`
 
+    **🔄 近期增强（多模型 · 工业场景 · NDT 融合）**
+    - **多模型机器学习对比**：预测 / 数据探索 / 机理模块均支持**多选模型**同时对比（GBR/RF/DT/LR/MLP/SVR/XGBoost/投票集成），给出逐模型预测、指标表、共识与离散度解读。
+    - **工业应用场景分析**：完整性工具与腐蚀环境分析新增「工业应用场景」子页，覆盖炼油 / 海底 / LNG / 化工 / 市政供热 / 注水 / 掺氢 / 电厂 / 造纸 / 矿浆 / 酸性气田 / 长输天然气共 12 类场景的腐蚀因素、多模型预测、NDT 建议与分威胁解决措施。
+    - **NDT 融入各功能**：无损检测建议不再孤立，已嵌入腐蚀预测、环境分析各模型结果、机理筛查（CO₂/H₂S/SCC）与工业场景分析中，按主导威胁推荐 ILI/直接评估工具。
+
     ### 技术栈
 
     | 组件 | 技术 |
@@ -975,8 +1219,8 @@ with tab7:
 with tab4:
     st.markdown("### 🔧 管道完整性管理工具")
 
-    tool_tab1, tool_tab2, tool_tab3 = st.tabs([
-        "📐 B31G剩余强度", "🧪 缓蚀剂推荐", "🎯 风险矩阵"
+    tool_tab1, tool_tab2, tool_tab3, tool_tab4 = st.tabs([
+        "📐 B31G剩余强度", "🧪 缓蚀剂推荐", "🎯 风险矩阵", "🏭 工业场景分析"
     ])
 
     # --- B31G 剩余强度计算器 ---
@@ -1131,14 +1375,21 @@ with tab4:
 
         st.caption("📌 概率等级由腐蚀速率决定，后果等级由管径/压力/位置综合评分决定。白圈标注当前管道风险位置。")
 
-# ======================
-# Tab 5: 腐蚀环境分析 (新增 P3)
+    # --- 工业场景腐蚀分析 ---
+    with tool_tab4:
+        st.markdown("#### 🏭 工业场景腐蚀分析（多行业 · 多模型 · NDT）")
+        st.markdown("选择典型工业场景，给出该场景的**腐蚀因素**、**机器学习多模型预测**、"
+                    "**推荐无损检测(NDT/ILI)** 与**分威胁解决措施**，提升完整性分析的工程针对性。")
+        render_scenario_analysis(dark_mode, default_ptype="gas_transmission", key_prefix="scn4")
+
+    # ======================
+    # Tab 5: 腐蚀环境分析 (新增 P3)
 # ======================
 with tab5:
     st.markdown("### 🌍 多环境腐蚀分析与成本评估")
 
-    env_tab1, env_tab2, env_tab3 = st.tabs([
-        "🌱 多环境腐蚀模型", "💰 腐蚀成本估算", "📚 腐蚀案例库"
+    env_tab1, env_tab2, env_tab3, env_tab4 = st.tabs([
+        "🌱 多环境腐蚀模型", "💰 腐蚀成本估算", "📚 腐蚀案例库", "🏭 工业应用场景"
     ])
 
     # --- 多环境腐蚀模型 ---
@@ -1169,6 +1420,7 @@ with tab5:
             if st.button("🔢 计算土壤腐蚀", key="s_calc", width="stretch"):
                 res = soil_corrosion(s_res, s_ph, s_moist, s_cl, s_so4, MATERIAL_CHOICES[s_mat])
                 _show_env_result("土壤腐蚀", res, ("corrosivity", "腐蚀性分级"), ("rate", "腐蚀速率 (mm/a)"))
+                render_ndt_callout(threat="外部腐蚀", context="土壤外腐蚀：MFL 金属损失普查 + ECDA 间接检测（DCVG/CIPS）。", expanded=False)
 
         elif env_type == "海水腐蚀":
             col_w1, col_w2 = st.columns(2)
@@ -1185,6 +1437,7 @@ with tab5:
                 _show_env_result("海水腐蚀", res, ("rate", "腐蚀速率 (mm/a)"), ("severity", "严重程度"))
                 if res.get("pitting_risk"):
                     st.markdown(f"**点蚀风险**: {res['pitting_risk']}（PREN≈{res['pren']}）")
+                render_ndt_callout(threat="外部腐蚀", context="海水腐蚀：MFL+UT-CD 组合 run，关注氯离子点蚀与海生物污损。", expanded=False)
 
         elif env_type == "微生物腐蚀(MIC)":
             col_m1, col_m2 = st.columns(2)
@@ -1199,6 +1452,7 @@ with tab5:
             if st.button("🔢 评估 MIC 风险", key="m_calc", width="stretch"):
                 res = mic_corrosion(m_srb, m_nut, m_temp, m_ox, MATERIAL_CHOICES[m_mat])
                 _show_env_result("MIC", res, ("risk", "风险等级"), ("rate", "腐蚀速率 (mm/a)"))
+                render_ndt_callout(threat="MIC", context="MIC：MFL 金属损失普查 + 定点壁厚 UT，定位垢下离散点蚀。", expanded=False)
 
             st.divider()
             st.markdown("##### 🦠 MIC-1 多菌属与生物膜热点")
@@ -1341,6 +1595,7 @@ with tab5:
                 res = galvanic_corrosion(MATERIAL_CHOICES[g_noble], MATERIAL_CHOICES[g_active], g_ratio, g_elec)
                 _show_env_result("电偶腐蚀", res, ("level", "严重程度"), ("rate", "腐蚀速率 (mm/a)"))
                 st.markdown(f"**电位差 ΔV**: {res['delta_e']} V ｜ **综合严重度**: {res['severity_index']}")
+                render_ndt_callout(threat="电偶腐蚀", context="电偶腐蚀：MFL 金属损失 + 远场涡流(ET) 查涂层下腐蚀。", expanded=False)
 
     # --- 腐蚀成本估算 ---
     with env_tab2:
@@ -1413,6 +1668,13 @@ with tab5:
         else:
             st.warning("⚠️ 案例库文件未找到 (data/standards/corrosion_case_library.md)")
 
+    # --- 工业应用场景 ---
+    with env_tab4:
+        st.markdown("#### 🏭 工业应用场景腐蚀分析（多行业 · 多模型 · NDT）")
+        st.markdown("从环境腐蚀视角选择典型工业场景，结合**机器学习多模型预测**与 **NDT 建议**，"
+                    "给出该场景的腐蚀因素与针对性解决措施。")
+        render_scenario_analysis(dark_mode, default_ptype="gas_transmission", key_prefix="scn5")
+
 # ======================
 # Tab 6: 机理与工程模型 (新增 — 基于公开文献与标准)
 # ======================
@@ -1420,8 +1682,8 @@ with tab6:
     st.markdown("### 🧪 腐蚀机理与工程模型")
     st.markdown("基于公开文献与行业标准（de Waard-Milliams / NORSOK M-506、API RP 14E、NACE MR0175 / ISO 15156、NACE SP0204）的**工程筛选与估算**模型。正式设计与合规则以现场检测及最新版标准为准。")
 
-    mech_tab1, mech_tab2, mech_tab3, mech_tab4, mech_tab5, mech_tab6 = st.tabs([
-        "🌫️ CO₂腐蚀", "💥 冲蚀", "🟡 H₂S开裂", "⚡ SCC敏感性", "🔬 PREN点蚀抗力", "🧬 SCC裂纹形貌"
+    mech_tab1, mech_tab2, mech_tab3, mech_tab4, mech_tab5, mech_tab6, mech_tab7 = st.tabs([
+        "🌫️ CO₂腐蚀", "💥 冲蚀", "🟡 H₂S开裂", "⚡ SCC敏感性", "🔬 PREN点蚀抗力", "🧬 SCC裂纹形貌", "🤖 多模型机理对比"
     ])
 
     # --- CO2 腐蚀 ---
@@ -1443,6 +1705,7 @@ with tab6:
             m3.metric("饱和 pH", f"{r['pH_sat']:.2f}" if r['pH_sat'] else "—")
             m4.metric("pH 修正因子", f"{r['f_pH']:.3f}" if r['f_pH'] else "—")
             st.caption("📌 " + r["regime"])
+            render_ndt_callout(threat="CO₂内腐蚀", context="CO₂内腐蚀：MFL 金属损失普查 + ICDA 内腐蚀直接评估（NACE SP0106）。", expanded=False)
             xs, ys = co2_corrosion_curve(co2_p, pH_actual=co2_ph)
             fig_co2 = go.Figure()
             fig_co2.add_trace(go.Scatter(x=xs, y=ys, mode="lines", name="腐蚀速率",
@@ -1501,6 +1764,7 @@ with tab6:
                 for c in hr["controls"]:
                     st.markdown(f"- {c}")
             st.caption("📚 " + hr["reference"])
+            render_ndt_callout(threat="H₂S开裂(SSC/HIC)", context="H₂S 环境开裂：UT-CD/PAUT 裂纹检测 + 硬度普查(MT/PT)。", expanded=False)
 
     # --- SCC 敏感性 ---
     with mech_tab4:
@@ -1536,6 +1800,7 @@ with tab6:
                 for d in sr["drivers_near_neutral"]:
                     st.markdown(f"- {d}")
             st.caption("📚 " + sr["reference"])
+            render_ndt_callout(threat="SCC(近中性pH)", context="SCC：UT-CD 裂纹型 ILI + SCCDA 直接评估（NACE SP0204）。", expanded=False)
 
             st.divider()
             st.markdown("##### 🛠️ SCC-1 开挖验证优先级 (ECDA)")
@@ -1660,6 +1925,59 @@ with tab6:
             st.caption("📚 参考: NACE SP0204 (SCC 直接评估); API 579 / RSTRENG (裂纹评定); "
                        "Battelle NG-18。注: 对数正态参数固定 σ=0.5；可据 ILI 统计标定。")
 
+    # --- 多模型机理预测对比（按可能性给出结果与措施）---
+    with mech_tab7:
+        st.markdown("#### 🤖 多模型机理预测对比（按可能性给出结果与措施）")
+        st.markdown("选择一种腐蚀机理，设定『低 / 中 / 高』三种可能性工况，用多个机器学习模型分别预测腐蚀速率，"
+                    "并对每种可能性给出对应的结果区间与针对性解决措施。")
+        _MECH_BASE = {
+            "CO₂内腐蚀": ("carbon_steel", {"temperature": 80, "ph": 5.5, "co2_pressure": 1.0, "h2s_concentration": 20, "flow_rate": 3.0, "chloride_content": 2000}),
+            "H₂S开裂":   ("carbon_steel", {"temperature": 40, "ph": 4.5, "co2_pressure": 0.2, "h2s_concentration": 50, "flow_rate": 2.0, "chloride_content": 1000}),
+            "SCC":       ("carbon_steel", {"temperature": 45, "ph": 6.5, "co2_pressure": 0.1, "h2s_concentration": 5, "flow_rate": 1.0, "chloride_content": 500}),
+            "MIC":       ("carbon_steel", {"temperature": 30, "ph": 6.0, "co2_pressure": 0.0, "h2s_concentration": 0, "flow_rate": 1.0, "chloride_content": 1500}),
+            "冲蚀":      ("carbon_steel", {"temperature": 50, "ph": 6.5, "co2_pressure": 0.1, "h2s_concentration": 5, "flow_rate": 2.0, "chloride_content": 500}),
+            "电偶腐蚀":  ("carbon_steel", {"temperature": 25, "ph": 7.0, "co2_pressure": 0.0, "h2s_concentration": 0, "flow_rate": 1.0, "chloride_content": 300}),
+            "外部腐蚀":  ("carbon_steel", {"temperature": 20, "ph": 6.0, "co2_pressure": 0.0, "h2s_concentration": 0, "flow_rate": 0.5, "chloride_content": 20000}),
+        }
+
+        def _scale_inputs(base, factor):
+            out = {}
+            for k, v in base.items():
+                if k == "temperature":
+                    out[k] = max(20.0, min(120.0, v * factor))
+                elif k == "ph":
+                    out[k] = max(3.5, min(9.0, v))
+                else:
+                    out[k] = max(0.0, v * factor)
+            return out
+
+        mech_choice = st.selectbox("选择腐蚀机理场景", list(_MECH_BASE.keys()), key="mech7_choice")
+        mat7, base7 = _MECH_BASE[mech_choice]
+        full7 = get_trained_models_full()
+        sev_levels = [("低可能性", 0.4), ("中可能性", 1.0), ("高可能性", 1.8)]
+        cols7 = st.columns(3)
+        for i, (sev_label, fac) in enumerate(sev_levels):
+            with cols7[i]:
+                inp7 = _scale_inputs(base7, fac)
+                preds7 = predict_multi_models(full7, ALL_MODEL_NAMES, mat7, inp7)
+                mean7 = sum(preds7.values()) / len(preds7) if preds7 else 0.0
+                rl7, col7 = _risk_band(mean7)
+                sev7 = RISK_TO_SEVERITY.get(rl7, "中")
+                st.markdown(f"**{sev_label}**")
+                st.metric("多模型预测均值 (mm/a)", f"{mean7:.3f}")
+                st.markdown(f"预测风险：<span style='color:{col7};font-weight:700;'>{rl7}</span>", unsafe_allow_html=True)
+                st.caption("各模型：" + "，".join(f"{k} {v:.3f}" for k, v in preds7.items()))
+                rem7 = recommend_remediation(mech_choice, sev7, "gas_transmission", 20, mat7)
+                st.markdown(f"**措施优先级**：`{rem7['priority']}`")
+                st.warning(rem7["b31g_note"])
+                with st.expander("查看解决措施", expanded=False):
+                    st.markdown("🚑 **立即措施：** " + "；".join(rem7["immediate"]))
+                    st.markdown(f"🛠️ **修复（{sev7}级）：** {rem7['repair']}")
+                    st.markdown(f"🔎 **监测方案：** {rem7['monitor']}")
+                    st.caption(rem7["standard"])
+        st.caption("📌 三种可能性通过对主导腐蚀工况参数等比缩放（低 0.4× / 中 1.0× / 高 1.8×，并约束在模型训练范围内）得到；"
+                   "预测与措施均按该可能性下的风险等级自动匹配。")
+
 # ======================
 # Tab 8: 实测数据标定 (P3)
 # ======================
@@ -1730,9 +2048,9 @@ with tab8:
     st.download_button("下载模板 CSV", csv_tpl, "mic_calibration_template.csv", "text/csv", key="tab8_dl")
 
 # ======================
-# Tab 9: 无损检测 NDT (P4 增强)
+# Tab 7: 无损检测 NDT (P4 增强)
 # ======================
-with tab9:
+with tab7:
     st.markdown("### 🔍 无损检测 (NDT) 与内检测 (ILI) 知识库")
     st.markdown("""
     管道完整性管理的**检测闭环**：建设期焊接检测(PAUT/RT) → 在役内检测(MFL/UT-CD/EMAT/Caliper)

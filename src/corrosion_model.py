@@ -216,27 +216,9 @@ class CorrosionPredictor:
         base_result["confidence_range"] = round(upper - lower, 4)
         return base_result
 
-    def train_multiple_models(self, df=None):
-        """
-        训练多种回归模型并返回对比结果
-
-        返回:
-            dict: 各模型的 R², MAE, RMSE 指标
-        """
-        if df is None:
-            csv_path = os.path.join(
-                os.path.dirname(__file__), "..", "data", "corrosion_dataset.csv"
-            )
-            if os.path.exists(csv_path):
-                df = pd.read_csv(csv_path)
-            else:
-                df = generate_corrosion_data(n_samples=500)
-
-        X, y, scaler, le, feature_cols = preprocess_data(df)
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42
-        )
-
+    @staticmethod
+    def build_model_dict():
+        """构造多种回归模型字典（含可选 XGBoost 与投票集成），供多模型对比/逐样本预测复用。"""
         models = {
             "GradientBoosting": GradientBoostingRegressor(
                 n_estimators=200, max_depth=5, learning_rate=0.1, random_state=42
@@ -275,9 +257,36 @@ class CorrosionPredictor:
             n_jobs=-1,
         )
         models["VotingEnsemble"] = ensemble
+        return models
+
+    def _train_split(self, df=None):
+        """公共：加载/生成数据并切分训练集（返回 X_scaled 供后续使用）。"""
+        if df is None:
+            csv_path = os.path.join(
+                os.path.dirname(__file__), "..", "data", "corrosion_dataset.csv"
+            )
+            if os.path.exists(csv_path):
+                df = pd.read_csv(csv_path)
+            else:
+                df = generate_corrosion_data(n_samples=500)
+
+        X, y, scaler, le, feature_cols = preprocess_data(df)
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42
+        )
+        return X_train, X_test, y_train, y_test, scaler, le, feature_cols
+
+    def train_multiple_models(self, df=None):
+        """
+        训练多种回归模型并返回对比结果（仅指标，供『模型对比』展示）。
+
+        返回:
+            dict: 各模型的 R², MAE, RMSE 指标（含已训练的 model 对象）
+        """
+        X_train, X_test, y_train, y_test, scaler, le, feature_cols = self._train_split(df)
 
         results = {}
-        for name, model in models.items():
+        for name, model in self.build_model_dict().items():
             model.fit(X_train, y_train)
             y_pred = model.predict(X_test)
             r2 = r2_score(y_test, y_pred)
@@ -291,6 +300,32 @@ class CorrosionPredictor:
             }
 
         return results
+
+    def train_all_full(self, df=None):
+        """
+        训练全部模型并返回 (results, scaler, le, feature_cols)，
+        供『多模型逐样本对比预测』使用（需要统一的缩放器与编码器对新输入做变换）。
+
+        返回:
+            tuple: (results{name:{r2,mae,rmse,model}}, scaler, label_encoder, feature_cols)
+        """
+        X_train, X_test, y_train, y_test, scaler, le, feature_cols = self._train_split(df)
+
+        results = {}
+        for name, model in self.build_model_dict().items():
+            model.fit(X_train, y_train)
+            y_pred = model.predict(X_test)
+            r2 = r2_score(y_test, y_pred)
+            mae = mean_absolute_error(y_test, y_pred)
+            rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+            results[name] = {
+                "r2": round(r2, 4),
+                "mae": round(mae, 4),
+                "rmse": round(rmse, 4),
+                "model": model,
+            }
+
+        return results, scaler, le, feature_cols
 
     def get_feature_importance(self):
         """返回特征重要性排序"""
