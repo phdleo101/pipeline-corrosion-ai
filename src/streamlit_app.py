@@ -35,6 +35,13 @@ from engineering_models import (
     scc_excavation_priority, scc_crack_life,
     scc_mitigation_tree, scc_risk_overlay,
 )
+from scc_morphology import simulate_crack_population, build_morphology_figures
+from mic_ml import (
+    get_trained_models, predict_mic_risk, MIC_RISK_LABELS, MIC_FEATURES, DEFAULT_FEATURES,
+)
+from data_calibration import (
+    sample_template_df, demo_synthetic_df, parse_uploaded_csv, calibrate_with_data,
+)
 from styles import apply_theme
 
 # ----------------------
@@ -78,6 +85,7 @@ with st.sidebar:
     - [完整性工具](#tab4)
     - [腐蚀环境分析](#tab5)
     - [机理与模型](#tab6)
+    - [实测数据标定](#tab8)
     - [关于](#tab7)
     """)
     st.markdown("---")
@@ -91,7 +99,7 @@ I18N = {
     "中文": {
         "title": "🔧 管道腐蚀预测与标准问答系统",
         "subtitle": "Pipeline Corrosion Prediction & Standards Q&A",
-        "tabs": ["📊 腐蚀预测", "💬 标准问答", "📈 数据探索", "🔧 完整性工具", "🌍 腐蚀环境分析", "🧪 机理与模型", "ℹ️ 关于"],
+        "tabs": ["📊 腐蚀预测", "💬 标准问答", "📈 数据探索", "🔧 完整性工具", "🌍 腐蚀环境分析", "🧪 机理与模型", "📡 实测数据标定", "ℹ️ 关于"],
         "input_params": "输入管道参数",
         "predict_btn": "🔍 预测腐蚀速率",
         "compare_btn": "📊 对比材料",
@@ -112,7 +120,7 @@ I18N = {
     "English": {
         "title": "🔧 Pipeline Corrosion Prediction & Standards Q&A",
         "subtitle": "AI-Powered Corrosion Management",
-        "tabs": ["📊 Prediction", "💬 Q&A", "📈 Data Explorer", "🔧 Integrity Tools", "🌍 Env. Analysis", "🧪 Mechanisms", "ℹ️ About"],
+        "tabs": ["📊 Prediction", "💬 Q&A", "📈 Data Explorer", "🔧 Integrity Tools", "🌍 Env. Analysis", "🧪 Mechanisms", "📡 Calibration", "ℹ️ About"],
         "input_params": "Input Parameters",
         "predict_btn": "🔍 Predict Corrosion Rate",
         "compare_btn": "📊 Compare Materials",
@@ -224,7 +232,7 @@ if st.query_params.get("shared") == "1":
 # ----------------------
 # 选项卡
 # ----------------------
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(T["tabs"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(T["tabs"])
 
 # ======================
 # Tab 1: 腐蚀预测 (增强版)
@@ -1184,6 +1192,55 @@ with tab5:
                 st.caption("💡 " + mp["system_note"])
                 st.caption("📚 " + mp["reference"])
 
+            st.divider()
+            st.markdown("##### 🤖 MIC 机器学习预测 (随机森林)")
+            st.markdown("基于物理约束合成数据集训练的随机森林，从 12 项环境/材料/运行特征预测 MIC 风险等级与腐蚀速率，"
+                        "并给出特征重要性。**模型用合成数据训练，正式评估须以现场检测为准。**")
+            mic_m = get_trained_models()
+            st.caption(f"📊 模型指标: 分类准确率 {mic_m['metrics']['accuracy']*100:.1f}% / 宏F1 {mic_m['metrics']['f1_macro']:.2f}；"
+                       f"速率回归 R² {mic_m['metrics']['r2']:.2f} / MAE {mic_m['metrics']['mae']:.3f} mm/a（留出集 {mic_m['metrics']['n_test']} 样本）")
+            f1c, f2c = st.columns(2)
+            with f1c:
+                ml_pH = st.slider("pH", 4.0, 9.0, DEFAULT_FEATURES["pH"], 0.1, key="ml_pH")
+                ml_cl = st.number_input("氯离子 (ppm)", 10.0, 60000.0, DEFAULT_FEATURES["chloride_ppm"], 100.0, key="ml_cl")
+                ml_srb = st.slider("SRB (log cells/mL)", 0.0, 7.0, DEFAULT_FEATURES["SRB_log"], 0.1, key="ml_srb")
+                ml_apb = st.slider("APB (log cells/mL)", 0.0, 6.0, DEFAULT_FEATURES["APB_log"], 0.1, key="ml_apb")
+                ml_irb = st.slider("IRB (log cells/mL)", 0.0, 6.0, DEFAULT_FEATURES["IRB_log"], 0.1, key="ml_irb")
+                ml_o2 = st.slider("O₂ (ppm)", 0.0, 5.0, DEFAULT_FEATURES["O2_ppm"], 0.1, key="ml_o2")
+            with f2c:
+                ml_h2s = st.number_input("H₂S (ppm)", 0.0, 50.0, DEFAULT_FEATURES["H2S_ppm"], 0.5, key="ml_h2s")
+                ml_temp = st.slider("温度 (°C)", 5.0, 80.0, DEFAULT_FEATURES["temperature"], 1.0, key="ml_temp")
+                ml_flow = st.slider("流速 (m/s)", 0.0, 3.0, DEFAULT_FEATURES["flow_velocity"], 0.1, key="ml_flow")
+                ml_water = st.slider("含水率 (%)", 0.0, 100.0, DEFAULT_FEATURES["water_cut"], 1.0, key="ml_water")
+                ml_sulf = st.number_input("硫酸盐 (ppm)", 0.0, 3000.0, DEFAULT_FEATURES["sulfate_ppm"], 10.0, key="ml_sulf")
+                ml_pren = st.slider("材料 PREN", 18.0, 45.0, DEFAULT_FEATURES["pren"], 0.5, key="ml_pren")
+            if st.button("🔢 预测 MIC 风险", key="ml_pred", width="stretch"):
+                feats = {
+                    "pH": ml_pH, "chloride_ppm": ml_cl, "SRB_log": ml_srb, "APB_log": ml_apb,
+                    "IRB_log": ml_irb, "O2_ppm": ml_o2, "H2S_ppm": ml_h2s, "temperature": ml_temp,
+                    "flow_velocity": ml_flow, "water_cut": ml_water, "sulfate_ppm": ml_sulf, "pren": ml_pren,
+                }
+                pred = predict_mic_risk(feats)
+                st.markdown(f"**MIC 风险等级: <span style='color:#e74c3c;font-weight:bold;font-size:1.3em'>{pred['risk_label']}</span>**"
+                            f" ｜ 预测腐蚀速率 **{pred['predicted_rate']:.3f} mm/a**", unsafe_allow_html=True)
+                fig_prob = go.Figure(go.Bar(
+                    x=[MIC_RISK_LABELS[i] for i in range(4)],
+                    y=[p*100 for p in pred["probabilities"]],
+                    marker_color=["#27ae60", "#f39c12", "#e67e22", "#e74c3c"],
+                    text=[f"{p*100:.0f}%" for p in pred["probabilities"]], textposition="auto"))
+                fig_prob.update_layout(height=240, margin=dict(l=40, r=20, t=20, b=30),
+                                      yaxis_title="概率 (%)", template="plotly_dark" if dark_mode else "plotly_white")
+                st.plotly_chart(fig_prob, width="stretch")
+                imp = mic_m["importances"]
+                fig_imp = go.Figure(go.Bar(
+                    x=[v for _, v in imp][::-1], y=[k for k, _ in imp][::-1], orientation="h",
+                    marker_color="#3498db"))
+                fig_imp.update_layout(height=360, margin=dict(l=120, r=20, t=20, b=30),
+                                     xaxis_title="特征重要性", template="plotly_dark" if dark_mode else "plotly_white")
+                st.plotly_chart(fig_imp, width="stretch")
+                st.caption("📚 训练数据由 NACE SP0192 思路的'教师规则'生成并叠加噪声，用于演示 ML 流程；"
+                           "接入真实检测数据可显著提升精度（见『实测数据标定』Tab）。")
+
         else:  # 电偶腐蚀
             col_g1, col_g2 = st.columns(2)
             with col_g1:
@@ -1276,8 +1333,8 @@ with tab6:
     st.markdown("### 🧪 腐蚀机理与工程模型")
     st.markdown("基于公开文献与行业标准（de Waard-Milliams / NORSOK M-506、API RP 14E、NACE MR0175 / ISO 15156、NACE SP0204）的**工程筛选与估算**模型。正式设计与合规则以现场检测及最新版标准为准。")
 
-    mech_tab1, mech_tab2, mech_tab3, mech_tab4, mech_tab5 = st.tabs([
-        "🌫️ CO₂腐蚀", "💥 冲蚀", "🟡 H₂S开裂", "⚡ SCC敏感性", "🔬 PREN点蚀抗力"
+    mech_tab1, mech_tab2, mech_tab3, mech_tab4, mech_tab5, mech_tab6 = st.tabs([
+        "🌫️ CO₂腐蚀", "💥 冲蚀", "🟡 H₂S开裂", "⚡ SCC敏感性", "🔬 PREN点蚀抗力", "🧬 SCC裂纹形貌"
     ])
 
     # --- CO2 腐蚀 ---
@@ -1476,5 +1533,113 @@ with tab6:
                                yaxis_title="PREN", template="plotly_dark" if dark_mode else "plotly_white")
         st.plotly_chart(fig_pren, width="stretch")
         st.caption("📚 PREN 为工程经验指标；实际点蚀行为还受温度、微生物、缝隙等因素影响。")
+
+    # --- SCC 裂纹形貌蒙特卡洛模拟 ---
+    with mech_tab6:
+        st.markdown("#### SCC 裂纹形貌与扩展蒙特卡洛模拟 (P3)")
+        st.markdown("对一组裂纹种群（初始深度 + 年扩展速率均服从对数正态分布）进行蒙特卡洛抽样，"
+                    "给出 T 年后的深度分布、超概率(POD)曲线与深度-长度形貌(分叉着色)，"
+                    "并统计穿壁失效比例。扩展速率区间与 SCC-2 经验值一致。")
+        m1, m2, m3 = st.columns(3)
+        with m1:
+            mc_n = st.slider("裂纹数量 n", 50, 1000, 300, step=50, key="mc_n")
+            mc_years = st.slider("模拟年限 (年)", 1, 50, 25, step=1, key="mc_years")
+        with m2:
+            mc_wt = st.number_input("壁厚/临界深度 a_c (mm)", min_value=3.0, max_value=40.0, value=12.0, step=0.5, key="mc_wt")
+            mc_a0 = st.number_input("初始深度中位数 (mm)", min_value=0.2, max_value=5.0, value=1.0, step=0.1, key="mc_a0")
+        with m3:
+            mc_g = st.number_input("年扩展速率中位数 (mm/a)", min_value=0.01, max_value=0.5, value=0.06, step=0.01, key="mc_g")
+            mc_branch = st.slider("分叉裂纹比例", 0.0, 1.0, 0.4, step=0.05, key="mc_branch")
+        if st.button("🎲 运行蒙特卡洛模拟", key="mc_run", width="stretch"):
+            sim = simulate_crack_population(
+                n_cracks=mc_n, years=mc_years, a0_mean=mc_a0, growth_mean=mc_g,
+                wall_thickness=mc_wt, branch_prob=mc_branch, seed=42,
+            )
+            figs = build_morphology_figures(sim, dark_mode=dark_mode)
+            s = sim["summary"]
+            a1, a2, a3, a4, a5, a6 = st.columns(6)
+            a1.metric("平均深度", f"{s['mean_depth']:.2f} mm")
+            a2.metric("P90 深度", f"{s['p90_depth']:.2f} mm")
+            a3.metric("P99 深度", f"{s['p99_depth']:.2f} mm")
+            a4.metric("最大深度", f"{s['max_depth']:.2f} mm")
+            a5.metric("穿壁失效数", f"{s['failures']} ({s['failure_prob']*100:.1f}%)")
+            a6.metric("近临界数", f"{s['near_critical']} ({s['near_critical_prob']*100:.1f}%)")
+            st.plotly_chart(figs["fig_hist"], width="stretch")
+            c1, c2 = st.columns(2)
+            with c1:
+                st.plotly_chart(figs["fig_pod"], width="stretch")
+            with c2:
+                st.plotly_chart(figs["fig_scatter"], width="stretch")
+            st.caption("📚 参考: NACE SP0204 (SCC 直接评估); API 579 / RSTRENG (裂纹评定); "
+                       "Battelle NG-18。注: 对数正态参数固定 σ=0.5；可据 ILI 统计标定。")
+
+# ======================
+# Tab 8: 实测数据标定 (P3)
+# ======================
+with tab8:
+    st.markdown("### 📡 实测数据标定 (P3)")
+    st.markdown("上传真实腐蚀/检测 CSV，自动识别目标列（数值→回归 / 类别→分类），用随机森林重新标定模型，"
+                "并对比基线给出精度提升与特征重要性。无数据时可用『合成 demo』或『模板下载』先验证流程。")
+    st.warning("⚠️ 标定仅在本会话临时生效；可下载指标/特征重要性归档。正式部署需将标定结果纳入版本管理。")
+
+    tab8_opt = st.radio("数据来源", ["上传 CSV", "载入合成 demo"], key="tab8_opt", horizontal=True)
+    df = None
+    if tab8_opt == "上传 CSV":
+        up = st.file_uploader("选择 CSV 文件", type=["csv"], key="tab8_up")
+        if up is not None:
+            try:
+                df = parse_uploaded_csv(up)
+                st.success(f"已读取 {df.shape[0]} 行 × {df.shape[1]} 列")
+            except Exception as e:
+                st.error(f"读取失败: {e}")
+    else:
+        if st.button("载入合成 demo 数据集", key="tab8_demo", width="stretch"):
+            df = demo_synthetic_df()
+            st.success(f"已生成合成 demo {df.shape[0]} 行")
+
+    if df is not None:
+        st.dataframe(df.head(10), use_container_width=True)
+        num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        target = st.selectbox("选择目标列（待预测）", num_cols, index=max(0, len(num_cols) - 1), key="tab8_target")
+        auto_feats = [c for c in num_cols if c != target]
+        feats_sel = st.multiselect("选择特征列", auto_feats, default=auto_feats, key="tab8_feats")
+        task_opt = st.radio("任务类型(可选覆盖)", ["自动", "回归", "分类"], key="tab8_task", horizontal=True)
+        if st.button("🚀 运行标定", key="tab8_run", width="stretch"):
+            try:
+                task_map = {"自动": None, "回归": "regression", "分类": "classification"}
+                res = calibrate_with_data(df, target, feature_cols=feats_sel, task=task_map[task_opt])
+                m = res["metrics"]
+                if m["task"] == "regression":
+                    st.markdown(f"**任务: 回归** ｜ 样本 {res['n_samples']}")
+                    ca, cb = st.columns(2)
+                    ca.metric("R² (模型)", f"{m['r2']:.3f}")
+                    cb.metric("R² (基线/均值)", f"{m['r2_baseline']:.3f}")
+                    ca.metric("MAE (模型)", f"{m['mae']:.4f}")
+                    cb.metric("MAE (基线)", f"{m['mae_baseline']:.4f}")
+                else:
+                    st.markdown(f"**任务: 分类** ｜ 样本 {res['n_samples']}")
+                    ca, cb = st.columns(2)
+                    ca.metric("准确率 (模型)", f"{m['accuracy']*100:.1f}%")
+                    cb.metric("准确率 (基线)", f"{m['accuracy_baseline']*100:.1f}%")
+                    ca.metric("宏F1 (模型)", f"{m['f1_macro']:.3f}")
+                    cb.metric("宏F1 (基线)", f"{m['f1_baseline']:.3f}")
+                fig_imp = go.Figure(go.Bar(
+                    x=[v for _, v in res["importances"]][::-1],
+                    y=[k for k, _ in res["importances"]][::-1],
+                    orientation="h", marker_color="#8e44ad"))
+                fig_imp.update_layout(height=360, margin=dict(l=140, r=20, t=20, b=30),
+                                     xaxis_title="特征重要性", template="plotly_dark" if dark_mode else "plotly_white")
+                st.plotly_chart(fig_imp, width="stretch")
+                st.caption("📚 模型: RandomForest；基线: 回归=均值预测器 / 分类=众数预测器。")
+            except Exception as e:
+                st.error(f"标定失败: {e}")
+
+    st.divider()
+    st.markdown("#### 📥 模板下载")
+    tpl = sample_template_df()
+    st.markdown("CSV 需含数值特征列与一列目标（数值=腐蚀速率回归；低基数类别=风险分类）。示例如下：")
+    st.dataframe(tpl, use_container_width=True)
+    csv_tpl = tpl.to_csv(index=False).encode("utf-8")
+    st.download_button("下载模板 CSV", csv_tpl, "mic_calibration_template.csv", "text/csv", key="tab8_dl")
 
 # ======================

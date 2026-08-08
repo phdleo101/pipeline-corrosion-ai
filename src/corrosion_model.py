@@ -115,14 +115,23 @@ class CorrosionPredictor:
             self.save(os.path.dirname(model_path))
             return
 
-        with open(model_path, "rb") as f:
-            data = pickle.load(f)
-        self.model = data["model"]
-        self.scaler = data["scaler"]
-        self.label_encoder = data["label_encoder"]
-        self.feature_cols = data["feature_cols"]
-        self.is_trained = True
-        print("模型加载完成")
+        try:
+            with open(model_path, "rb") as f:
+                data = pickle.load(f)
+            self.model = data["model"]
+            self.scaler = data["scaler"]
+            self.label_encoder = data["label_encoder"]
+            self.feature_cols = data["feature_cols"]
+            self.is_trained = True
+            print("模型加载完成")
+        except Exception as e:
+            # 兼容旧版/跨环境：pickle 反序列化失败（如依赖缺失）时重新训练
+            print(f"模型加载失败（{e}），重新训练以兼容当前环境...")
+            self.train()
+            try:
+                self.save(os.path.dirname(model_path))
+            except Exception:
+                pass
 
     def predict(self, material, temperature, ph, co2_pressure,
                 h2s_concentration, flow_rate, chloride_content):

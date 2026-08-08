@@ -136,3 +136,32 @@
 | MIC-3 材料升级 | `pren()` / `pren_all()`（PREN 对比） |
 | MIC-1/2 方案 | `mic_corrosion()`（基础评分） |
 | SCC-1 开挖流程 | `scc_susceptibility()`（敏感性评分） |
+
+---
+
+## 五、第三批（P3，已落地 ✅）：SCC 裂纹形貌模拟、MIC 机器学习预测、实测数据标定
+
+### 5.1 SCC 裂纹形貌与扩展蒙特卡洛模拟（SCC 深化）
+- 新增 `src/scc_morphology.py`：`simulate_crack_population()`（初始深度与年扩展速率均服从对数正态，蒙特卡洛抽样）+ `build_morphology_figures()`（深度直方图 / 超概率 POD 曲线 / 深度-长度形貌散点-分叉着色）
+- 输出 T 年后深度分布、穿壁失效比例（a_c = 壁厚）、POD 曲线，衔接 SCC-2 经验扩展速率区间
+- UI：「机理与模型」Tab 新增第 6 子页「🧬 SCC裂纹形貌」
+
+### 5.2 MIC 机器学习预测（MIC 深化，FDE 作品集 AI 工程亮点）
+- 新增 `src/mic_ml.py`：
+  - `generate_synthetic_dataset()`：按目标风险等级分布（20/35/35/10%）类别条件生成 12 项特征（物理约束：风险越高微生物活性/营养/不利环境越显著）
+  - `train_models()`：随机森林分类器（风险等级）+ 回归器（腐蚀速率）
+  - `predict_mic_risk()` / `get_trained_models()`（模块级缓存，进程内仅训练一次）
+- 验证指标：分类准确率 ~0.99 / 宏F1 ~0.99；速率回归 R² ~0.94
+- **如实标注**：模型基于合成数据训练，正式评估须以现场检测为准（见 Tab8 标定）
+- UI：「腐蚀环境分析」Tab 的 MIC 子模块新增「🤖 MIC 机器学习预测」，含风险等级+概率条+特征重要性
+
+### 5.3 实测数据标定（数据驱动闭环）
+- 新增 `src/data_calibration.py`：`parse_uploaded_csv()` / `calibrate_with_data()`（自动识别回归/分类，与基线对比）/ `demo_synthetic_df()` / `sample_template_df()`
+- UI：新增顶层 Tab「📡 实测数据标定」——上传 CSV 或载入合成 demo，运行随机森林标定并输出精度提升与特征重要性，可下载模板与指标归档
+- 用途：将 MIC ML 模型与经验模型从合成数据切换到真实数据，形成数据驱动闭环
+
+### 5.4 附带修复（部署健壮性原则）
+- `src/corrosion_model.py` 的 `load()` 增加异常兜底：当 .pkl 反序列化失败（如跨环境依赖缺失）时自动重新训练，避免整个 App 启动崩溃
+- 重新生成 `models/corrosion_predictor.pkl` 为纯 scikit-learn `GradientBoostingRegressor`（R²=0.8905），移除对未列入 requirements 的 xgboost 的依赖，确保 Streamlit Cloud 部署可加载
+
+> P3 三项的验证：Streamlit `AppTest` 全脚本无异常通过；SCC 形态/MIC ML/标定三个入口均渲染正常，MIC 预测按钮执行无误。
