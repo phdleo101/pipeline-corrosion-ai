@@ -555,6 +555,178 @@ def mic_biocide_program(risk_level, system_type="间歇系统", water_temp=30.0)
 
 
 # ----------------------------------------------------------------------
+# 3d. MIC 材料升级决策 (复用 PREN 思路，NACE SP0192 / MR0175)
+# ----------------------------------------------------------------------
+
+# 材料升级阶梯（按耐蚀性递增），含近似 PREN 用于点蚀抗力对比
+_MATERIAL_LADDER = [
+    ("carbon_steel", "碳钢", 0),
+    ("stainless_316", "316不锈钢", 25),
+    ("duplex_2205", "2205双相不锈钢", 34),
+    ("duplex_2507", "2507超级双相不锈钢", 42),
+    ("alloy_825", "825合金", 30),
+    ("alloy_625", "625合金", 48),
+    ("alloy_c276", "C-276合金", 65),
+    ("titanium", "钛合金", 99),
+]
+
+
+def mic_material_upgrade(risk_level, current_material="carbon_steel",
+                         chloride_ppm=0, temperature=30.0):
+    """
+    MIC 材料升级决策（基于 MIC 风险等级 + 当前材料，给出升级建议）
+
+    碳钢高风险时升级路径：
+      316 SS(PREN≈25, 有限) → 2205 双相(PREN≈34) → 2507(C-276 级耐全面腐蚀)。
+    结合工况（温度/氯离子）给出「最低合理可行」材料。
+
+    参数:
+        risk_level: MIC 风险等级 (极低/中等/高/极高)
+        current_material: 当前管材代码（MATERIAL_CHOICES 键）
+        chloride_ppm: 氯离子浓度 (ppm)
+        temperature: 温度 (°C)
+    返回: 字典
+    """
+    cur_name = _MATERIAL_NAME.get(current_material, current_material)
+    cur_pren = _pren(current_material) or 0
+
+    # 按风险等级给出目标 PREN 下限
+    if risk_level in ("高", "极高"):
+        target_pren = 34 if chloride_ppm >= 10000 else 25
+    elif risk_level == "中等":
+        target_pren = 25
+    else:
+        target_pren = 0  # 极低：维持现状
+
+    # 高氯 + 高温 进一步要求更高 PREN
+    if chloride_ppm >= 10000 and temperature >= 60:
+        target_pren = max(target_pren, 42)
+
+    # 当前已满足？则无需升级
+    if cur_pren >= target_pren:
+        return {
+            "risk_level": risk_level,
+            "current_material": cur_name,
+            "current_pren": cur_pren,
+            "recommended_material": cur_name,
+            "recommended_pren": cur_pren,
+            "escalation": [],
+            "verdict": "当前材料 PREN 已满足该工况 MIC 防护要求，维持并配合杀菌剂与监测。",
+            "target_pren": target_pren,
+            "reference": "NACE SP0192 (MIC 控制); NACE MR0175 / ISO 15156（材料选型）",
+        }
+
+    # 给出升级阶梯（从当前材料之后、且 PREN 达标的首个材料起）
+    idx = next((i for i, (c, _, _) in enumerate(_MATERIAL_LADDER) if c == current_material), 0)
+    ladder = []
+    rec = cur_name
+    rec_pren = cur_pren
+    for code, name, pren in _MATERIAL_LADDER[idx + 1:]:
+        ladder.append({"material": name, "PREN": pren})
+        if pren >= target_pren and rec == cur_name:
+            rec = name
+            rec_pren = pren
+    if rec == cur_name and ladder:
+        rec = ladder[-1]["material"]
+        rec_pren = ladder[-1]["PREN"]
+
+    if risk_level == "极低":
+        verdict = "MIC 风险极低：当前 %s 可维持，重点以杀菌剂与监测控制，无需材料升级。" % cur_name
+    else:
+        verdict = ("MIC 风险%s：当前 %s(PREN≈%s) 不足，建议升级至 %s(PREN≈%s)；"
+                   "高氯/高温工况优先选用双相钢或镍基合金。" % (
+                       risk_level, cur_name, cur_pren, rec, rec_pren))
+
+    return {
+        "risk_level": risk_level,
+        "current_material": cur_name,
+        "current_pren": cur_pren,
+        "recommended_material": rec,
+        "recommended_pren": rec_pren,
+        "escalation": ladder,
+        "verdict": verdict,
+        "target_pren": target_pren,
+        "reference": "NACE SP0192 (MIC 控制); NACE MR0175 / ISO 15156（材料选型）",
+    }
+
+
+# ----------------------------------------------------------------------
+# 3e. MIC 监测与再评估计划 (NACE SP0192 / API 570)
+# ----------------------------------------------------------------------
+
+def mic_monitoring_plan(risk_level, system_type="间歇系统"):
+    """
+    MIC 监测与再评估计划（基于 MIC 风险等级给出监测方案与再筛查周期）
+
+    监测手段：
+      在线/离线：腐蚀挂片 + 生物膜探针(NACE SP0192) + MFL/UT ILI 金属损失。
+    再筛查周期：高/极高 6–12 月，中 1–2 年，低 2–3 年。
+
+    参数:
+        risk_level: MIC 风险等级 (极低/中等/高/极高)
+        system_type: 系统类型 (间歇系统/连续系统)
+    返回: 字典
+    """
+    plan = {
+        "极低": {
+            "re_screen": "2–3 年",
+            "methods": [
+                "腐蚀挂片（离线，年度取出评估失重）",
+                "年度 SRB 平板计数(MPN) 趋势监测",
+            ],
+            "online": "暂不需在线探针；常规巡检电位与挂片",
+            "note": "维持常规监测即可，重点关注死管与低流速段。",
+        },
+        "中等": {
+            "re_screen": "1–2 年",
+            "methods": [
+                "腐蚀挂片 + 生物膜探针（under-deposit 微环境评估）",
+                "半年度 SRB/APB/IRB 群落检测(NACE TM0194)",
+                "定期生物清扫与清管(Pigging)",
+            ],
+            "online": "可选在线腐蚀探针，关注局部速率突变",
+            "note": "纳入例行监测，建立微生物基线以便趋势比对。",
+        },
+        "高": {
+            "re_screen": "6–12 月",
+            "methods": [
+                "在线腐蚀探针 + 生物膜探针（实时 SRB 活性）",
+                "季度 SRB 杀灭率评估(目标 ≥ 99%)",
+                "MFL/UT ILI 金属损失复核 + 高风险段开挖",
+            ],
+            "online": "在线腐蚀 + 微生物活性双探针组合",
+            "note": "缩短周期并加密取样，杀菌剂效果须用挂片失重验证。",
+        },
+        "极高": {
+            "re_screen": "3–6 月",
+            "methods": [
+                "在线腐蚀 + biofilm 探针 + 水质多参数连续监测",
+                "月度 SRB 杀灭率 + 群落结构(分子生物学)检测",
+                "高频 ILI + 关键段更换/内衬修复",
+            ],
+            "online": "在线腐蚀 + 微生物 + 流量多参数监控",
+            "note": "最高频监测，必要时管段更换；间歇系统须排干滞留水防越冬群落。",
+        },
+    }
+    p = plan.get(risk_level, plan["中等"])
+    if system_type == "间歇系统":
+        sys_note = "间歇系统：停用阶段须排干滞留水/死管段，防止微生物越冬与生物膜累积。"
+    else:
+        sys_note = "连续系统：保持流动与药剂连续投加，关注流速异常导致的沉积热点。"
+
+    return {
+        "risk_level": risk_level,
+        "system_type": system_type,
+        "re_screen_interval": p["re_screen"],
+        "methods": p["methods"],
+        "online_recommend": p["online"],
+        "note": p["note"],
+        "system_note": sys_note,
+        "reference": "NACE SP0192 (MIC 控制); API 570 (在役检验); NACE TM0194",
+    }
+
+
+# ----------------------------------------------------------------------
 # 4. 电偶腐蚀
 # ----------------------------------------------------------------------
 def galvanic_corrosion(noble_material, active_material, area_ratio, electrolyte="海水"):

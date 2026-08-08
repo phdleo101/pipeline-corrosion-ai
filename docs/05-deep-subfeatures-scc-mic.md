@@ -115,7 +115,13 @@
      - `src/engineering_models.py`：`scc_excavation_priority()`（SCC-1）、`scc_crack_life()`（SCC-2）
      - `src/environment_models.py`：`mic_multi_organism()`（MIC-1）、`mic_biocide_program()`（MIC-2）
      - UI：SCC 子功能在「机理与模型」Tab 的 SCC 子模块内；MIC 子功能在「腐蚀环境分析」Tab 的 MIC 子模块内
-2. **第二批（P2，待实现）**：SCC-3/4、MIC-3/4，做管理闭环与跨模块联动。
+2. **第二批（P2，已落地 ✅）**：SCC-3/4、MIC-3/4，做管理闭环与跨模块联动。
+   - 实现位置：
+     - `src/engineering_models.py`：`scc_mitigation_tree()`（SCC-3 缓解决策树）、`scc_risk_overlay()`（SCC-4 风险叠加，复用 `integrity_tools.risk_matrix()` 的 `prob_idx_override` 参数）
+     - `src/environment_models.py`：`mic_material_upgrade()`（MIC-3 材料升级，复用 PREN 思路）、`mic_monitoring_plan()`（MIC-4 监测再评估）
+     - `src/integrity_tools.py`：`risk_matrix()` 新增 `prob_idx_override` 参数（向后兼容），支持把非均匀腐蚀概率映射到同一 5×5 矩阵
+     - UI：SCC-3/4 在「机理与模型」Tab 的 SCC 子模块内（与筛查共用输入）；MIC-3/4 在「腐蚀环境分析」Tab 的 MIC 子模块内
+   - 验证：`py_compile` 全部通过 + 本地 Streamlit 启动 HTTP 200；四函数功能自检通过（SCC-3 输出 5 条缓解项、SCC-4 极高风险、MIC-3 碳钢→2205、MIC-4 极高 3–6 月）。
 
 > 说明：所有新增模型均为**工程筛查/估算**性质，正式设计与合规则以最新版标准与现场检测为准。文档中速率常数取自公开文献与行业经验范围，落地时建议接入用户实测数据标定。
 

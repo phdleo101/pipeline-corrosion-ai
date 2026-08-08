@@ -494,3 +494,150 @@ def scc_crack_life(a0_mm, wall_t_mm, diameter_mm, yield_strength_mpa,
         "verdict": verdict,
         "reference": "B31G / RSTRENG (Folias 因子); Kiefner & Vieth (Battelle); API 579 裂纹评定; NACE SP0204",
     }
+
+
+# ----------------------------------------------------------------------
+# 8. SCC 缓解决策树 (NACE SP0204 / PRCI 缓解指南)
+# ----------------------------------------------------------------------
+
+def scc_mitigation_tree(coating_type, operating_stress_pct, age_years,
+                        temperature_C, cp_shielded, terrain):
+    """
+    SCC 缓解决策树（基于敏感性评分给出缓解组合建议）
+
+    近中性 pH SCC：阴极保护(CP)有效，需将管地电位负移到 −0.95 V CSE 以下抑制；
+                   剥离涂层下的 CP 屏蔽仍是难点（需改进 CP 设计/排流）。
+    高 pH SCC：对 CP 不敏感，主要靠涂层修复 + 降压运行 + 裂纹检测型 ILI。
+
+    参数: (同 scc_susceptibility)
+    返回: 字典
+    """
+    sr = scc_susceptibility(coating_type, operating_stress_pct, age_years,
+                            temperature_C, cp_shielded, terrain)
+    hp = min(sr["high_pH_score"], 100)
+    nn = min(sr["near_neutral_score"], 100)
+    dominant = "high_pH" if hp >= nn else "near_neutral"
+    max_score = max(hp, nn)
+
+    mitigations = []
+
+    # 1) 阴极保护优化
+    if nn >= 30:
+        mitigations.append({
+            "action": "阴极保护(CP)优化",
+            "applicability": "对近中性 pH SCC 有效",
+            "detail": "将管地电位负移至 −0.95 V CSE 以下抑制开裂；对 CP 屏蔽段改进阳极布置/排流，消除剥离涂层下的保护盲区",
+            "priority": "高" if nn >= 60 else "中",
+        })
+    if hp >= 30:
+        mitigations.append({
+            "action": "阴极保护(CP)优化",
+            "applicability": "对高 pH SCC 作用有限",
+            "detail": "高 pH SCC 对 CP 不敏感，CP 仅作辅助腐蚀控制，不应依赖其抑制开裂",
+            "priority": "低",
+        })
+
+    # 2) 涂层修复（两类 SCC 的共同诱因是剥离旧涂层）
+    if coating_type in ("旧涂层(煤焦油/沥青)", "未知") or max_score >= 30:
+        mitigations.append({
+            "action": "涂层修复 / 更换",
+            "applicability": "两类 SCC 均适用（剥离涂层是共同诱因）",
+            "detail": "更换剥离旧涂层为 FBE/PE，并加强补口与焊缝涂装，消除浓电解质微环境",
+            "priority": "高" if max_score >= 60 else "中",
+        })
+
+    # 3) 降压运行
+    if operating_stress_pct >= 60:
+        mitigations.append({
+            "action": "降压运行",
+            "applicability": "两类 SCC 均适用",
+            "detail": "当前操作应力 %d%% SMYS ≥ 60%%，建议降至 < 60%% SMYS 以显著减缓裂纹扩展" % operating_stress_pct,
+            "priority": "高",
+        })
+    else:
+        mitigations.append({
+            "action": "降压运行",
+            "applicability": "两类 SCC 均适用",
+            "detail": "当前操作应力 %d%% SMYS 已 < 60%%，维持并监控应力波动" % operating_stress_pct,
+            "priority": "低",
+        })
+
+    # 4) 裂纹检测型内检测 ILI
+    if max_score >= 30:
+        mitigations.append({
+            "action": "裂纹检测型内检测(ILI)",
+            "applicability": "两类 SCC 均适用",
+            "detail": "采用 EMAT/UT（而非 MFL）裂纹检测型 ILI 识别轴向裂纹，结合开挖验证标定",
+            "priority": "高" if max_score >= 60 else "中",
+        })
+
+    if dominant == "high_pH":
+        core = "涂层修复 + 裂纹检测ILI + 降压运行"
+    else:
+        core = "CP优化 + 涂层修复 + 裂纹检测ILI"
+    summary = ("主导机理: %s；推荐以 %s 为核心缓解组合。"
+               % ("高 pH SCC（晶间）" if dominant == "high_pH" else "近中性 pH SCC（穿晶）", core))
+
+    return {
+        "dominant": dominant,
+        "max_score": max_score,
+        "mitigations": mitigations,
+        "summary": summary,
+        "reference": "NACE SP0204 (SCCDA); PRCI SCC 缓解指南; API RP 1176",
+    }
+
+
+# ----------------------------------------------------------------------
+# 9. SCC 风险矩阵叠加 (复用 integrity_tools.risk_matrix)
+# ----------------------------------------------------------------------
+
+def scc_risk_overlay(coating_type, operating_stress_pct, age_years,
+                     temperature_C, cp_shielded, terrain,
+                     diameter_mm, pressure_mpa, location_type, hca=False):
+    """
+    将 SCC 敏感性评分映射到失效概率维度，与管径/压力/位置（后果）叠加，
+    输出综合风险等级与在 5×5 风险矩阵中的位置。复用 integrity_tools.risk_matrix()。
+
+    参数:
+        (前 6 项同 scc_susceptibility)
+        diameter_mm: 管径 (mm)
+        pressure_mpa: 操作压力 (MPa)
+        location_type: 位置类型（人口密集区/一般区域/荒野）
+        hca: 是否高后果区（若为 True，按高后果位置处理以抬升后果等级）
+    返回: 字典
+    """
+    from integrity_tools import risk_matrix
+
+    sr = scc_susceptibility(coating_type, operating_stress_pct, age_years,
+                            temperature_C, cp_shielded, terrain)
+    max_score = max(min(sr["high_pH_score"], 100), min(sr["near_neutral_score"], 100))
+
+    # SCC 评分 → 失效概率等级(0–4)
+    if max_score >= 80:
+        prob_idx = 4
+    elif max_score >= 60:
+        prob_idx = 3
+    elif max_score >= 40:
+        prob_idx = 2
+    elif max_score >= 20:
+        prob_idx = 1
+    else:
+        prob_idx = 0
+
+    # HCA 视为高后果位置，复用 risk_matrix 的后果与综合评级逻辑
+    loc = "人口密集区" if hca else location_type
+    rm = risk_matrix(corrosion_rate=0.0, diameter=diameter_mm,
+                     pressure=pressure_mpa, location_type=loc,
+                     prob_idx_override=prob_idx)
+
+    return {
+        "scc_max_score": max_score,
+        "prob_idx": prob_idx,
+        "prob_level": ["极低", "低", "中", "高", "极高"][prob_idx],
+        "cons_level": rm["cons_level"],
+        "risk_level": rm["risk_level"],
+        "risk_color": rm["risk_color"],
+        "risk_score": rm["risk_score"],
+        "hca_treated_as": loc,
+        "reference": "NACE SP0204 (SCCDA); ASME B31G 风险矩阵思路; API RP 1176",
+    }

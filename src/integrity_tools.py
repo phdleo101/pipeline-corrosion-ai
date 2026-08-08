@@ -151,7 +151,7 @@ def recommend_inhibitor(temperature, flow_rate, co2_pressure, h2s_concentration,
     return rec
 
 
-def risk_matrix(corrosion_rate, diameter, pressure, location_type):
+def risk_matrix(corrosion_rate, diameter, pressure, location_type, prob_idx_override=None):
     """
     风险矩阵评估
 
@@ -160,11 +160,16 @@ def risk_matrix(corrosion_rate, diameter, pressure, location_type):
         diameter: 管径 (mm)
         pressure: 操作压力 (MPa)
         location_type: 位置类型（人口密集区/一般区域/荒野）
+        prob_idx_override: 可选，直接指定失效概率等级(0–4)，覆盖由腐蚀速率推导的概率。
+                           用于把非均匀腐蚀（如 SCC 敏感性）映射到同一风险矩阵。
 
     返回: 包含概率等级、后果等级、风险等级的字典
     """
-    # 失效概率等级（基于腐蚀速率）
-    if corrosion_rate < 0.1:
+    # 失效概率等级（基于腐蚀速率；或外部覆盖）
+    if prob_idx_override is not None:
+        prob_idx = max(0, min(4, int(prob_idx_override)))
+        prob_level = ["极低", "低", "中", "高", "极高"][prob_idx]
+    elif corrosion_rate < 0.1:
         prob_level = "极低"
         prob_idx = 0
     elif corrosion_rate < 0.5:

@@ -26,12 +26,14 @@ from environment_models import (
     soil_corrosion, seawater_corrosion, mic_corrosion,
     galvanic_corrosion, corrosion_cost_estimate,
     mic_multi_organism, mic_biocide_program,
+    mic_material_upgrade, mic_monitoring_plan,
 )
 from engineering_models import (
     co2_corrosion, co2_corrosion_curve,
     erosion_critical_velocity, erosion_rate_salama, EROSION_C,
     h2s_ssc_screening, scc_susceptibility, pren_all,
     scc_excavation_priority, scc_crack_life,
+    scc_mitigation_tree, scc_risk_overlay,
 )
 from styles import apply_theme
 
@@ -1144,6 +1146,44 @@ with tab5:
                     st.caption("🌡️ " + bp["temp_note"])
                 st.caption("📚 " + bp["reference"])
 
+            st.divider()
+            st.markdown("##### 🔩 MIC-3 材料升级决策")
+            st.markdown("基于 MIC 风险等级与当前材料，结合氯离子/温度给出升级路径（复用 PREN 思路）。")
+            mu1, mu2, mu3 = st.columns(3)
+            with mu1:
+                mu_risk = st.selectbox("MIC 风险等级", ["极低", "中等", "高", "极高"], index=2, key="mu_risk")
+                mu_mat = st.selectbox("当前材料", list(MATERIAL_CHOICES.keys()), index=0, key="mu_mat")
+            with mu2:
+                mu_cl = st.number_input("氯离子 (ppm)", min_value=0.0, max_value=40000.0, value=200.0, step=50.0, key="mu_cl")
+                mu_temp = st.number_input("温度 (°C)", min_value=0.0, max_value=120.0, value=30.0, step=1.0, key="mu_temp")
+            if st.button("🔢 生成材料升级建议", key="mu_calc", width="stretch"):
+                up = mic_material_upgrade(mu_risk, current_material=MATERIAL_CHOICES[mu_mat],
+                                          chloride_ppm=mu_cl, temperature=mu_temp)
+                st.markdown(f"**当前材料**: {up['current_material']}（PREN≈{up['current_pren']}）")
+                st.markdown(f"**建议升级至**: {up['recommended_material']}（PREN≈{up['recommended_pren']}）｜ 目标 PREN≥{up['target_pren']}")
+                if up["escalation"]:
+                    st.markdown("**升级阶梯**: " + " → ".join([f"{e['material']}({e['PREN']})" for e in up["escalation"]]))
+                st.markdown(f"**结论**: {up['verdict']}")
+                st.caption("📚 " + up["reference"])
+
+            st.divider()
+            st.markdown("##### 🔬 MIC-4 监测与再评估计划")
+            st.markdown("基于 MIC 风险等级给出监测手段与再筛查周期（NACE SP0192 / API 570）。")
+            mp1, mp2 = st.columns(2)
+            with mp1:
+                mp_risk = st.selectbox("MIC 风险等级", ["极低", "中等", "高", "极高"], index=2, key="mp_risk")
+            with mp2:
+                mp_sys = st.selectbox("系统类型", ["间歇系统", "连续系统"], key="mp_sys")
+            if st.button("🔢 生成监测计划", key="mp_calc", width="stretch"):
+                mp = mic_monitoring_plan(mp_risk, system_type=mp_sys)
+                st.markdown(f"**再筛查周期**: {mp['re_screen_interval']} ｜ **在线建议**: {mp['online_recommend']}")
+                st.markdown("**监测手段**:")
+                for m in mp["methods"]:
+                    st.markdown(f"- {m}")
+                st.markdown(f"**建议**: {mp['note']}")
+                st.caption("💡 " + mp["system_note"])
+                st.caption("📚 " + mp["reference"])
+
         else:  # 电偶腐蚀
             col_g1, col_g2 = st.columns(2)
             with col_g1:
@@ -1390,6 +1430,35 @@ with tab6:
                 m4.metric("剩余寿命", f"{life['life_years']:.1f} 年")
                 st.markdown(f"**处置建议**: {life['verdict']}")
                 st.caption("📚 " + life["reference"])
+
+            st.divider()
+            st.markdown("##### 🌳 SCC-3 缓解决策树")
+            st.markdown("基于敏感性评分给出缓解组合建议：CP优化/涂层修复/降压运行/裂纹检测型ILI。")
+            if st.button("🔢 生成缓解决策", key="scc_mit", width="stretch"):
+                mt = scc_mitigation_tree(s_coat, s_stress, s_age, s_temp, s_cp, s_terr)
+                st.markdown(f"**{mt['summary']}**")
+                for m in mt["mitigations"]:
+                    st.markdown(f"- **{m['action']}**（优先级 {m['priority']}，{m['applicability']}）：{m['detail']}")
+                st.caption("📚 " + mt["reference"])
+
+            st.divider()
+            st.markdown("##### 🗺️ SCC-4 风险矩阵叠加")
+            st.markdown("将 SCC 敏感性映射为失效概率维度，与管径/压力/位置（后果）叠加，输出综合风险等级。复用项目 5×5 风险矩阵。")
+            s41, s42 = st.columns(2)
+            with s41:
+                s4_dia = st.number_input("管径 D (mm)", min_value=50.0, max_value=2000.0, value=610.0, step=10.0, key="s4_dia")
+                s4_pres = st.number_input("操作压力 (MPa)", min_value=0.1, max_value=20.0, value=8.0, step=0.5, key="s4_pres")
+            with s42:
+                s4_loc = st.selectbox("位置类型", ["人口密集区", "一般区域", "荒野"], key="s4_loc")
+                s4_hca = st.checkbox("高后果区(HCA)", value=False, key="s4_hca")
+            if st.button("🔢 计算 SCC 综合风险", key="scc_risk", width="stretch"):
+                ro = scc_risk_overlay(s_coat, s_stress, s_age, s_temp, s_cp, s_terr,
+                                      s4_dia, s4_pres, s4_loc, hca=s4_hca)
+                st.markdown(f"**SCC 敏感性(max)**: {ro['scc_max_score']} → 失效概率等级 **{ro['prob_level']}**")
+                st.markdown(f"**失效后果等级**: {ro['cons_level']}（HCA 已按「{ro['hca_treated_as']}」处理）")
+                st.markdown(f"**综合风险**: <span style='color:{ro['risk_color']};font-weight:bold;font-size:1.2em'>{ro['risk_level']}</span>",
+                            unsafe_allow_html=True)
+                st.caption("📚 " + ro["reference"])
 
     # --- PREN ---
     with mech_tab5:
