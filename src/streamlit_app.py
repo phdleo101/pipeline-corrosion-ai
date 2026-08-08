@@ -10,6 +10,7 @@ import sys
 import os
 import io
 import time
+import re
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -21,6 +22,10 @@ import plotly.express as px
 from corrosion_model import CorrosionPredictor
 from rag_engine import CorrosionRAG
 from integrity_tools import b31g_calculate, recommend_inhibitor, risk_matrix, RISK_MATRIX_COLORS
+from environment_models import (
+    soil_corrosion, seawater_corrosion, mic_corrosion,
+    galvanic_corrosion, corrosion_cost_estimate,
+)
 from styles import apply_theme
 
 # ----------------------
@@ -60,9 +65,10 @@ with st.sidebar:
     st.markdown("""
     - [腐蚀预测](#tab1)
     - [标准问答](#tab2)
-    - [完整性工具](#tab3)
-    - [数据探索](#tab4)
-    - [关于](#tab5)
+    - [数据探索](#tab3)
+    - [关于](#tab4)
+    - [完整性工具](#tab5)
+    - [腐蚀环境分析](#tab6)
     """)
     st.markdown("---")
     st.caption("MIT License")
@@ -75,7 +81,7 @@ I18N = {
     "中文": {
         "title": "🔧 管道腐蚀预测与标准问答系统",
         "subtitle": "Pipeline Corrosion Prediction & Standards Q&A",
-        "tabs": ["📊 腐蚀预测", "💬 标准问答", "🔧 完整性工具", "📈 数据探索", "ℹ️ 关于"],
+        "tabs": ["📊 腐蚀预测", "💬 标准问答", "📈 数据探索", "ℹ️ 关于", "🔧 完整性工具", "🌍 腐蚀环境分析"],
         "input_params": "输入管道参数",
         "predict_btn": "🔍 预测腐蚀速率",
         "compare_btn": "📊 对比材料",
@@ -96,7 +102,7 @@ I18N = {
     "English": {
         "title": "🔧 Pipeline Corrosion Prediction & Standards Q&A",
         "subtitle": "AI-Powered Corrosion Management",
-        "tabs": ["📊 Prediction", "💬 Q&A", "🔧 Integrity Tools", "📈 Data Explorer", "ℹ️ About"],
+        "tabs": ["📊 Prediction", "💬 Q&A", "📈 Data Explorer", "ℹ️ About", "🔧 Integrity Tools", "🌍 Env. Analysis"],
         "input_params": "Input Parameters",
         "predict_btn": "🔍 Predict Corrosion Rate",
         "compare_btn": "📊 Compare Materials",
@@ -166,6 +172,36 @@ RISK_STYLES = {
 }
 
 # ----------------------
+# 通用：渲染多环境腐蚀模型结果卡片
+# ----------------------
+def _show_env_result(label, res, *pairs):
+    """渲染多环境腐蚀模型结果。pairs: (结果字典key, 显示名) 元组列表。"""
+    st.markdown(f"#### {label}估算结果")
+    if pairs:
+        cols = st.columns(len(pairs))
+        for i, (k, name) in enumerate(pairs):
+            cols[i].metric(name, str(res.get(k)))
+
+    color = res.get("color", "#333")
+    severity = res.get("severity") or res.get("risk") or res.get("corrosivity") or res.get("level")
+    if severity:
+        st.markdown(
+            f'<div style="background:{color}15; border:2px solid {color}; border-radius:10px; padding:12px; margin:10px 0; text-align:center;">'
+            f'<span style="font-weight:700; color:{color}; font-size:1.1rem;">{severity}</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    detail = res.get("detail") or res.get("factors")
+    if detail:
+        with st.expander("📋 评分明细"):
+            for dk, dv in detail.items():
+                st.markdown(f"- {dk}: {dv}")
+    if "advice" in res:
+        st.caption("💡 " + res["advice"])
+
+
+# ----------------------
 # 页头
 # ----------------------
 st.markdown(f'<div class="main-title">{T["title"]}</div>', unsafe_allow_html=True)
@@ -178,7 +214,7 @@ if st.query_params.get("shared") == "1":
 # ----------------------
 # 选项卡
 # ----------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs(T["tabs"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(T["tabs"])
 
 # ======================
 # Tab 1: 腐蚀预测 (增强版)
@@ -779,6 +815,11 @@ with tab4:
     - 相关性热力图 + 特征重要性
     - 多模型对比（GBR / RF / DT / LR）
 
+    **6. 腐蚀环境分析模块**
+    - 多环境腐蚀模型：土壤（DIN 50929 思路）/海水/微生物(MIC)/电偶腐蚀的简化速率估算
+    - 腐蚀成本估算：基于管径/长度/壁厚/腐蚀速率 → 年度金属损失、检测、停产与维修成本
+    - 腐蚀失效案例库：CO₂腐蚀/MIC/氯离子SCC/土壤外腐蚀/电偶腐蚀等典型失效案例
+
     ### 技术栈
 
     | 组件 | 技术 |
@@ -936,3 +977,150 @@ with tab5:
         """, unsafe_allow_html=True)
 
         st.caption("📌 概率等级由腐蚀速率决定，后果等级由管径/压力/位置综合评分决定。白圈标注当前管道风险位置。")
+
+# ======================
+# Tab 6: 腐蚀环境分析 (新增 P3)
+# ======================
+with tab6:
+    st.markdown("### 🌍 多环境腐蚀分析与成本评估")
+
+    env_tab1, env_tab2, env_tab3 = st.tabs([
+        "🌱 多环境腐蚀模型", "💰 腐蚀成本估算", "📚 腐蚀案例库"
+    ])
+
+    # --- 多环境腐蚀模型 ---
+    with env_tab1:
+        st.markdown("#### 多环境腐蚀速率估算")
+        st.markdown("选择腐蚀环境类型，输入关键参数估算腐蚀速率与严重程度。公式为工程简化估算，正式评估以现场检测为准。")
+
+        env_type = st.selectbox("环境类型", ["土壤腐蚀", "海水腐蚀", "微生物腐蚀(MIC)", "电偶腐蚀"], key="env_type")
+
+        if env_type == "土壤腐蚀":
+            col_s1, col_s2 = st.columns(2)
+            with col_s1:
+                s_res = st.number_input("土壤电阻率 (Ω·cm)", min_value=10.0, max_value=20000.0, value=1000.0, step=100.0, key="s_res")
+                s_ph = st.number_input("土壤 pH", min_value=2.0, max_value=13.0, value=6.0, step=0.1, key="s_ph")
+                s_mat = st.selectbox("管材", list(MATERIAL_CHOICES.keys()), key="s_mat")
+            with col_s2:
+                s_moist = st.number_input("含水率 (%)", min_value=0.0, max_value=100.0, value=25.0, step=1.0, key="s_moist")
+                s_cl = st.number_input("氯离子 (ppm)", min_value=0.0, max_value=20000.0, value=200.0, step=50.0, key="s_cl")
+                s_so4 = st.number_input("硫酸根 (ppm)", min_value=0.0, max_value=20000.0, value=500.0, step=50.0, key="s_so4")
+
+            if st.button("🔢 计算土壤腐蚀", key="s_calc", width="stretch"):
+                res = soil_corrosion(s_res, s_ph, s_moist, s_cl, s_so4, MATERIAL_CHOICES[s_mat])
+                _show_env_result("土壤腐蚀", res, ("corrosivity", "腐蚀性分级"), ("rate", "腐蚀速率 (mm/a)"))
+
+        elif env_type == "海水腐蚀":
+            col_w1, col_w2 = st.columns(2)
+            with col_w1:
+                w_ox = st.number_input("溶解氧 (mg/L)", min_value=0.0, max_value=14.0, value=6.0, step=0.5, key="w_ox")
+                w_sal = st.number_input("盐度 (‰)", min_value=0.0, max_value=45.0, value=35.0, step=1.0, key="w_sal")
+                w_mat = st.selectbox("管材", list(MATERIAL_CHOICES.keys()), key="w_mat")
+            with col_w2:
+                w_temp = st.number_input("温度 (°C)", min_value=-2.0, max_value=60.0, value=20.0, step=1.0, key="w_temp")
+                w_flow = st.number_input("流速 (m/s)", min_value=0.0, max_value=15.0, value=1.5, step=0.5, key="w_flow")
+
+            if st.button("🔢 计算海水腐蚀", key="w_calc", width="stretch"):
+                res = seawater_corrosion(w_ox, w_sal, w_temp, w_flow, MATERIAL_CHOICES[w_mat])
+                _show_env_result("海水腐蚀", res, ("rate", "腐蚀速率 (mm/a)"), ("severity", "严重程度"))
+                if res.get("pitting_risk"):
+                    st.markdown(f"**点蚀风险**: {res['pitting_risk']}（PREN≈{res['pren']}）")
+
+        elif env_type == "微生物腐蚀(MIC)":
+            col_m1, col_m2 = st.columns(2)
+            with col_m1:
+                m_srb = st.number_input("SRB 数量 (MPN/mL)", min_value=1.0, max_value=1000000.0, value=10000.0, step=1000.0, key="m_srb")
+                m_temp = st.number_input("温度 (°C)", min_value=0.0, max_value=80.0, value=30.0, step=1.0, key="m_temp")
+                m_mat = st.selectbox("管材", list(MATERIAL_CHOICES.keys()), key="m_mat")
+            with col_m2:
+                m_nut = st.selectbox("营养物水平", ["低", "中", "高"], key="m_nut")
+                m_ox = st.number_input("溶解氧 (mg/L)", min_value=0.0, max_value=10.0, value=1.0, step=0.5, key="m_ox")
+
+            if st.button("🔢 评估 MIC 风险", key="m_calc", width="stretch"):
+                res = mic_corrosion(m_srb, m_nut, m_temp, m_ox, MATERIAL_CHOICES[m_mat])
+                _show_env_result("MIC", res, ("risk", "风险等级"), ("rate", "腐蚀速率 (mm/a)"))
+
+        else:  # 电偶腐蚀
+            col_g1, col_g2 = st.columns(2)
+            with col_g1:
+                g_noble = st.selectbox("阴极性材料（贵金属）", list(MATERIAL_CHOICES.keys()), index=9, key="g_noble")
+                g_active = st.selectbox("阳极性材料（活泼金属）", list(MATERIAL_CHOICES.keys()), index=0, key="g_active")
+            with col_g2:
+                g_ratio = st.number_input("阴极面积/阳极面积", min_value=0.1, max_value=100.0, value=5.0, step=0.5, key="g_ratio")
+                g_elec = st.selectbox("介质", ["海水", "淡水", "土壤"], key="g_elec")
+
+            if st.button("🔢 评估电偶腐蚀", key="g_calc", width="stretch"):
+                res = galvanic_corrosion(MATERIAL_CHOICES[g_noble], MATERIAL_CHOICES[g_active], g_ratio, g_elec)
+                _show_env_result("电偶腐蚀", res, ("level", "严重程度"), ("rate", "腐蚀速率 (mm/a)"))
+                st.markdown(f"**电位差 ΔV**: {res['delta_e']} V ｜ **综合严重度**: {res['severity_index']}")
+
+    # --- 腐蚀成本估算 ---
+    with env_tab2:
+        st.markdown("#### 腐蚀经济性评估")
+        st.markdown("输入管道参数与腐蚀速率，估算年度腐蚀相关成本构成。")
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            c_dia = st.number_input("管径 (mm)", min_value=50.0, max_value=2000.0, value=610.0, step=10.0, key="c_dia")
+            c_len = st.number_input("管线长度 (km)", min_value=0.1, max_value=5000.0, value=50.0, step=1.0, key="c_len")
+            c_wt = st.number_input("壁厚 (mm)", min_value=2.0, max_value=50.0, value=12.0, step=0.5, key="c_wt")
+        with c2:
+            c_rate = st.number_input("腐蚀速率 (mm/a)", min_value=0.0, max_value=5.0, value=0.2, step=0.01, key="c_rate")
+            c_price = st.number_input("管材单价 (¥/kg)", min_value=1.0, max_value=500.0, value=8.0, step=0.5, key="c_price")
+            c_insp = st.number_input("单次检测费 (¥)", min_value=0.0, max_value=10000000.0, value=200000.0, step=10000.0, key="c_insp")
+        with c3:
+            c_down = st.number_input("单日停产损失 (¥/天)", min_value=0.0, max_value=100000000.0, value=500000.0, step=50000.0, key="c_down")
+            c_freq = st.number_input("年检测频次", min_value=0.1, max_value=10.0, value=1.0, step=0.5, key="c_freq")
+            c_remed = st.number_input("每米维修成本 (¥/m)", min_value=0.0, max_value=100000.0, value=0.0, step=500.0, key="c_remed")
+
+        if st.button("💰 计算腐蚀成本", key="c_calc", width="stretch"):
+            cost = corrosion_cost_estimate(c_dia, c_len, c_wt, c_rate, c_price, c_insp, c_down, c_freq, c_remed)
+
+            col_a, col_b, col_c, col_d = st.columns(4)
+            col_a.metric("年度金属损失", f"{cost['annual_mass_kg']:.0f} kg")
+            col_b.metric("预计剩余寿命", f"{cost['life_years']:.1f} 年")
+            col_c.metric("年停产天数", f"{cost['downtime_days']:.1f} 天")
+            col_d.metric("年度总腐蚀成本", f"¥{cost['total_cost']:,.0f}")
+
+            bd = cost["breakdown"]
+            fig_cost = go.Figure(data=[go.Pie(
+                labels=list(bd.keys()), values=list(bd.values()),
+                hole=0.4, textinfo="label+percent", textfont={"size": 12},
+            )])
+            fig_cost.update_layout(
+                title="年度腐蚀成本构成",
+                height=360, margin=dict(l=20, r=20, t=40, b=20),
+                template="plotly_dark" if dark_mode else "plotly_white",
+            )
+            st.plotly_chart(fig_cost, width="stretch")
+
+            st.markdown("##### 成本明细")
+            det_df = pd.DataFrame([{"项目": k, "年度成本(¥)": v} for k, v in bd.items()])
+            st.dataframe(det_df, width="stretch", hide_index=True)
+            st.caption(f"📌 估算基于管径 {c_dia:.0f}mm × {c_len:.0f}km × 腐蚀速率 {c_rate:.2f} mm/a；金属密度按 7850 kg/m³。结果为方案比选参考，非精确核算。")
+
+    # --- 腐蚀案例库 ---
+    with env_tab3:
+        st.markdown("#### 腐蚀失效案例库")
+        st.markdown("精选典型腐蚀失效模式，用于风险识别与对策参考。")
+
+        case_path = os.path.join(os.path.dirname(__file__), "..", "data", "standards", "corrosion_case_library.md")
+        if os.path.exists(case_path):
+            with open(case_path, encoding="utf-8") as f:
+                case_md = f.read()
+            parts = re.split(r"(?m)^## ", case_md)
+            intro = parts[0].strip()
+            sections = {}
+            for p in parts[1:]:
+                lines = p.split("\n", 1)
+                title = lines[0].strip()
+                body = lines[1].strip() if len(lines) > 1 else ""
+                sections[title] = body
+            st.markdown(intro)
+            sel = st.selectbox("选择案例", list(sections.keys()), key="case_sel")
+            st.markdown("## " + sel)
+            st.markdown(sections[sel])
+            with st.expander("📑 查看全部案例与速查表"):
+                st.markdown(case_md)
+        else:
+            st.warning("⚠️ 案例库文件未找到 (data/standards/corrosion_case_library.md)")
