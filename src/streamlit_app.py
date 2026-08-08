@@ -26,6 +26,11 @@ from environment_models import (
     soil_corrosion, seawater_corrosion, mic_corrosion,
     galvanic_corrosion, corrosion_cost_estimate,
 )
+from engineering_models import (
+    co2_corrosion, co2_corrosion_curve,
+    erosion_critical_velocity, erosion_rate_salama, EROSION_C,
+    h2s_ssc_screening, scc_susceptibility, pren_all,
+)
 from styles import apply_theme
 
 # ----------------------
@@ -66,9 +71,10 @@ with st.sidebar:
     - [腐蚀预测](#tab1)
     - [标准问答](#tab2)
     - [数据探索](#tab3)
-    - [关于](#tab4)
-    - [完整性工具](#tab5)
-    - [腐蚀环境分析](#tab6)
+    - [完整性工具](#tab4)
+    - [腐蚀环境分析](#tab5)
+    - [机理与模型](#tab6)
+    - [关于](#tab7)
     """)
     st.markdown("---")
     st.caption("MIT License")
@@ -81,7 +87,7 @@ I18N = {
     "中文": {
         "title": "🔧 管道腐蚀预测与标准问答系统",
         "subtitle": "Pipeline Corrosion Prediction & Standards Q&A",
-        "tabs": ["📊 腐蚀预测", "💬 标准问答", "📈 数据探索", "ℹ️ 关于", "🔧 完整性工具", "🌍 腐蚀环境分析"],
+        "tabs": ["📊 腐蚀预测", "💬 标准问答", "📈 数据探索", "🔧 完整性工具", "🌍 腐蚀环境分析", "🧪 机理与模型", "ℹ️ 关于"],
         "input_params": "输入管道参数",
         "predict_btn": "🔍 预测腐蚀速率",
         "compare_btn": "📊 对比材料",
@@ -102,7 +108,7 @@ I18N = {
     "English": {
         "title": "🔧 Pipeline Corrosion Prediction & Standards Q&A",
         "subtitle": "AI-Powered Corrosion Management",
-        "tabs": ["📊 Prediction", "💬 Q&A", "📈 Data Explorer", "ℹ️ About", "🔧 Integrity Tools", "🌍 Env. Analysis"],
+        "tabs": ["📊 Prediction", "💬 Q&A", "📈 Data Explorer", "🔧 Integrity Tools", "🌍 Env. Analysis", "🧪 Mechanisms", "ℹ️ About"],
         "input_params": "Input Parameters",
         "predict_btn": "🔍 Predict Corrosion Rate",
         "compare_btn": "📊 Compare Materials",
@@ -214,7 +220,7 @@ if st.query_params.get("shared") == "1":
 # ----------------------
 # 选项卡
 # ----------------------
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(T["tabs"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(T["tabs"])
 
 # ======================
 # Tab 1: 腐蚀预测 (增强版)
@@ -778,9 +784,9 @@ with tab3:
         """)
 
 # ======================
-# Tab 4: 关于 (更新)
+# Tab 7: 关于 (更新)
 # ======================
-with tab4:
+with tab7:
     st.markdown("""
     ## 关于本系统
 
@@ -820,6 +826,16 @@ with tab4:
     - 腐蚀成本估算：基于管径/长度/壁厚/腐蚀速率 → 年度金属损失、检测、停产与维修成本
     - 腐蚀失效案例库：CO₂腐蚀/MIC/氯离子SCC/土壤外腐蚀/电偶腐蚀等典型失效案例
 
+    **7. 机理与工程模型模块**
+    - CO₂腐蚀(de Waard-Milliams / NORSOK M-506 思路)：温度、CO₂分压、pH 耦合的基础腐蚀速率与 pH 修正
+    - 冲蚀临界流速(API RP 14E)与 Salama 含砂冲蚀速率估算
+    - H₂S 环境开裂筛查(NACE MR0175 / ISO 15156)：SSC 严苛度区域与硬度上限
+    - 应力腐蚀开裂(SCC)敏感性筛查(NACE SP0204)：高 pH / 近中性 pH 两类机理
+    - 点蚀抗力当量 PREN：不锈钢/双相钢/镍基合金抗氯离子点蚀能力对比
+
+    **📚 研究资料与公开数据源**
+    - 管线腐蚀痛点、PHMSA/PRCI/EGIG/CONCAWE/NTSB/NIST/NETL 等公开数据库、关键论文与标准引用见 `data/standards/research_references.md`
+
     ### 技术栈
 
     | 组件 | 技术 |
@@ -840,9 +856,9 @@ with tab4:
     """)
 
 # ======================
-# Tab 5: 完整性工具 (新增 P2)
+# Tab 4: 完整性工具 (新增 P2)
 # ======================
-with tab5:
+with tab4:
     st.markdown("### 🔧 管道完整性管理工具")
 
     tool_tab1, tool_tab2, tool_tab3 = st.tabs([
@@ -1002,9 +1018,9 @@ with tab5:
         st.caption("📌 概率等级由腐蚀速率决定，后果等级由管径/压力/位置综合评分决定。白圈标注当前管道风险位置。")
 
 # ======================
-# Tab 6: 腐蚀环境分析 (新增 P3)
+# Tab 5: 腐蚀环境分析 (新增 P3)
 # ======================
-with tab6:
+with tab5:
     st.markdown("### 🌍 多环境腐蚀分析与成本评估")
 
     env_tab1, env_tab2, env_tab3 = st.tabs([
@@ -1147,3 +1163,146 @@ with tab6:
                 st.markdown(case_md)
         else:
             st.warning("⚠️ 案例库文件未找到 (data/standards/corrosion_case_library.md)")
+
+# ======================
+# Tab 6: 机理与工程模型 (新增 — 基于公开文献与标准)
+# ======================
+with tab6:
+    st.markdown("### 🧪 腐蚀机理与工程模型")
+    st.markdown("基于公开文献与行业标准（de Waard-Milliams / NORSOK M-506、API RP 14E、NACE MR0175 / ISO 15156、NACE SP0204）的**工程筛选与估算**模型。正式设计与合规则以现场检测及最新版标准为准。")
+
+    mech_tab1, mech_tab2, mech_tab3, mech_tab4, mech_tab5 = st.tabs([
+        "🌫️ CO₂腐蚀", "💥 冲蚀", "🟡 H₂S开裂", "⚡ SCC敏感性", "🔬 PREN点蚀抗力"
+    ])
+
+    # --- CO2 腐蚀 ---
+    with mech_tab1:
+        st.markdown("#### CO₂ 腐蚀速率估算 (de Waard-Milliams / NORSOK M-506 思路)")
+        st.markdown("基础式 log10(V) = 5.8 − 1710/(T+273) + 0.67·log10(pCO2)，叠加 pH 修正因子 f_pH = 10^[0.32·(pH_sat − pH)]。")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            co2_T = st.slider("温度 (°C)", 20, 120, 65, step=1, key="co2_T")
+        with c2:
+            co2_p = st.number_input("CO₂分压 (bar)", min_value=0.001, max_value=100.0, value=2.0, step=0.1, key="co2_p")
+        with c3:
+            co2_ph = st.number_input("原位 pH (可选)", min_value=0.0, max_value=14.0, value=6.0, step=0.1, key="co2_ph")
+        if st.button("🔢 计算 CO₂ 腐蚀", key="co2_calc", width="stretch"):
+            r = co2_corrosion(co2_T, co2_p, co2_ph)
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("基础速率 (mm/a)", f"{r['rate_base']:.3f}")
+            m2.metric("修正后速率 (mm/a)", f"{r['rate_corrected']:.3f}")
+            m3.metric("饱和 pH", f"{r['pH_sat']:.2f}" if r['pH_sat'] else "—")
+            m4.metric("pH 修正因子", f"{r['f_pH']:.3f}" if r['f_pH'] else "—")
+            st.caption("📌 " + r["regime"])
+            xs, ys = co2_corrosion_curve(co2_p, pH_actual=co2_ph)
+            fig_co2 = go.Figure()
+            fig_co2.add_trace(go.Scatter(x=xs, y=ys, mode="lines", name="腐蚀速率",
+                                         line=dict(color="#e74c3c", width=2)))
+            fig_co2.add_trace(go.Scatter(x=[co2_T], y=[r["rate_corrected"]],
+                                         mode="markers+text", name="当前工况",
+                                         marker=dict(size=12, color="#2c3e50", symbol="diamond"),
+                                         text=[f"{r['rate_corrected']:.2f}"], textposition="top center"))
+            fig_co2.update_layout(height=340, margin=dict(l=50, r=20, t=20, b=40),
+                                  xaxis_title="温度 (°C)", yaxis_title="腐蚀速率 (mm/a)",
+                                  template="plotly_dark" if dark_mode else "plotly_white")
+            st.plotly_chart(fig_co2, width="stretch")
+            st.caption("📚 " + r["reference"])
+
+    # --- 冲蚀 ---
+    with mech_tab2:
+        st.markdown("#### 冲蚀临界流速 (API RP 14E) 与含砂冲蚀速率 (Salama)")
+        st.markdown("临界流速 V_crit = C / √ρ_m；Salama 含砂冲蚀 E = 0.182·W·V²·D/(d²·ρ_m)。")
+        e1, e2 = st.columns(2)
+        with e1:
+            ero_mat = st.selectbox("管材", list(EROSION_C.keys()), key="ero_mat")
+            ero_rho = st.number_input("混合密度 ρ_m (kg/m³)", min_value=1.0, max_value=2000.0, value=1000.0, step=10.0, key="ero_rho")
+            ero_v = st.slider("实际混合流速 (m/s)", 0.0, 20.0, 5.0, step=0.1, key="ero_v")
+        with e2:
+            ero_d = st.number_input("管径 (mm)", min_value=10.0, max_value=1500.0, value=150.0, step=10.0, key="ero_d")
+            ero_w = st.number_input("含砂速率 (kg/天)", min_value=0.0, max_value=5000.0, value=50.0, step=5.0, key="ero_w")
+            ero_size = st.number_input("砂粒粒径 (μm)", min_value=1.0, max_value=2000.0, value=200.0, step=10.0, key="ero_size")
+        if st.button("🔢 计算冲蚀风险", key="ero_calc", width="stretch"):
+            vc = erosion_critical_velocity(ero_rho, ero_mat)
+            er = erosion_rate_salama(ero_w, ero_v, ero_d, ero_size, ero_rho)
+            v_ok = ero_v <= vc["V_crit_m_s"]
+            st.markdown(f"**临界流速 V_crit**: {vc['V_crit_m_s']:.2f} m/s (C={vc['C']})")
+            st.markdown(f"**流速判定**: {'✅ 低于临界，冲蚀风险可控' if v_ok else '⚠️ 超过临界，存在冲蚀风险'}")
+            st.markdown(f"**Salama 含砂冲蚀速率**: {er['rate_mm_yr']:.4f} mm/a — {er['verdict']}")
+            st.caption("📚 " + er["reference"])
+
+    # --- H2S 开裂 ---
+    with mech_tab3:
+        st.markdown("#### H₂S 环境开裂筛查 (NACE MR0175 / ISO 15156)")
+        st.markdown("酸性服役判定：pH2S ≥ 0.0003 bar 须按 MR0175 选材；SSC 硬度上限 ≤ 22 HRC。本筛查为保守定性，非 ISO 15156-2 图1 精确曲线。")
+        h1, h2, h3 = st.columns(3)
+        with h1:
+            h2s_p = st.number_input("H₂S 分压 (bar)", min_value=0.0, max_value=100.0, value=0.5, step=0.01, key="h2s_p")
+        with h2:
+            h2s_ph = st.number_input("原位 pH", min_value=0.0, max_value=14.0, value=4.0, step=0.1, key="h2s_ph")
+        with h3:
+            h2s_hrc = st.number_input("材料硬度 HRC (可选)", min_value=0.0, max_value=60.0, value=24.0, step=1.0, key="h2s_hrc")
+        if st.button("🔢 筛查 H₂S 开裂", key="h2s_calc", width="stretch"):
+            hr = h2s_ssc_screening(h2s_p, h2s_ph, h2s_hrc)
+            st.markdown(f"**酸性服役**: {'是 (须按 MR0175 选材)' if hr['sour'] else '否 (豁免)'}")
+            st.markdown(f"**区域**: {hr['region']}")
+            st.markdown(f"**严苛度**: {hr['severity']}")
+            if hr['hardness_hrc'] is not None:
+                st.markdown(f"**硬度 {hr['hardness_hrc']:.0f} HRC**: {'✅ 满足 SSC 上限 ≤22 HRC' if hr['hardness_ok'] else '⚠️ 超过 SSC 硬度上限 ≤22 HRC'}")
+            with st.expander("📋 控制措施"):
+                for c in hr["controls"]:
+                    st.markdown(f"- {c}")
+            st.caption("📚 " + hr["reference"])
+
+    # --- SCC 敏感性 ---
+    with mech_tab4:
+        st.markdown("#### 应力腐蚀开裂 (SCC) 敏感性筛查 (NACE SP0204)")
+        st.markdown("外部 SCC 两类机理：高 pH (晶间, pH 9–11, 碳酸盐) 与近中性 pH (穿晶, pH 6–7.5, 富 CO2 地下水)。评分 0–100，越高越敏感。")
+        s1, s2 = st.columns(2)
+        with s1:
+            s_coat = st.selectbox("涂层类型", ["旧涂层(煤焦油/沥青)", "现代涂层(FBE/PE)", "未知"], key="s_coat")
+            s_stress = st.slider("操作应力 (%SMYS)", 0, 100, 70, step=1, key="s_stress")
+            s_age = st.number_input("管龄 (年)", min_value=0, max_value=80, value=20, step=1, key="s_age")
+        with s2:
+            s_temp = st.slider("运行温度 (°C)", -10, 80, 45, step=1, key="s_temp")
+            s_cp = st.checkbox("阴极保护被屏蔽 (CP shielded)", value=True, key="s_cp")
+            s_terr = st.selectbox("土壤地形", ["排水良好砂土", "黏土/保水", "未知"], key="s_terr")
+        if st.button("🔢 筛查 SCC 敏感性", key="scc_calc", width="stretch"):
+            sr = scc_susceptibility(s_coat, s_stress, s_age, s_temp, s_cp, s_terr)
+            hp = min(sr["high_pH_score"], 100)
+            nn = min(sr["near_neutral_score"], 100)
+            fig_scc = go.Figure(data=go.Bar(
+                x=[hp, nn], y=["高pH SCC", "近中性pH SCC"], orientation="h",
+                marker=dict(color=[ "#e74c3c" if hp>=60 else ("#f39c12" if hp>=30 else "#27ae60"),
+                                     "#e74c3c" if nn>=60 else ("#f39c12" if nn>=30 else "#27ae60")]),
+                text=[f"{sr['high_pH_level']} ({hp})", f"{sr['near_neutral_level']} ({nn})"],
+                textposition="auto"))
+            fig_scc.update_layout(height=240, margin=dict(l=90, r=20, t=20, b=30),
+                                 xaxis_title="敏感性评分 (0–100)",
+                                 template="plotly_dark" if dark_mode else "plotly_white")
+            st.plotly_chart(fig_scc, width="stretch")
+            with st.expander("📋 高 pH SCC 驱动因素"):
+                for d in sr["drivers_high_pH"]:
+                    st.markdown(f"- {d}")
+            with st.expander("📋 近中性 pH SCC 驱动因素"):
+                for d in sr["drivers_near_neutral"]:
+                    st.markdown(f"- {d}")
+            st.caption("📚 " + sr["reference"])
+
+    # --- PREN ---
+    with mech_tab5:
+        st.markdown("#### 点蚀抗力当量 PREN 对比")
+        st.markdown("PREN = %Cr + 3.3×%Mo + 16×%N，用于不锈钢/双相钢/镍基合金抗氯离子点蚀能力对比（钛依赖氧化膜，不适用 PREN）。")
+        pren_rows = pren_all()
+        names = [r["material"].split(" (")[0] for r in pren_rows]
+        vals = [r["PREN"] if r["PREN"] is not None else 0 for r in pren_rows]
+        cols = ["#27ae60", "#27ae60", "#f39c12", "#f39c12", "#f39c12",
+                "#2980b9", "#2980b9", "#8e44ad", "#8e44ad", "#7f8c8d"]
+        fig_pren = go.Figure(data=go.Bar(
+            x=names, y=vals, marker=dict(color=cols),
+            text=[f"{v:.1f}" if v else "N/A" for v in vals], textposition="auto"))
+        fig_pren.update_layout(height=380, margin=dict(l=50, r=20, t=20, b=90),
+                               yaxis_title="PREN", template="plotly_dark" if dark_mode else "plotly_white")
+        st.plotly_chart(fig_pren, width="stretch")
+        st.caption("📚 PREN 为工程经验指标；实际点蚀行为还受温度、微生物、缝隙等因素影响。")
+
+# ======================
