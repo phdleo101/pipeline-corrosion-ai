@@ -583,6 +583,9 @@ with tab2:
         "管道腐蚀速率的风险等级如何划分？",
         "阴极保护的最小保护电位是多少？",
         "ASME B31G 如何评估腐蚀缺陷的剩余强度？",
+        "去哪里下载美国 PHMSA 管道事故公开数据？",
+        "de Waard-Milliams 的 CO₂ 腐蚀模型公式是什么？",
+        "GB/T 23258 对三层PE防腐层厚度有什么要求？",
     ]
     cols = st.columns(len(example_questions))
     for i, (col, q) in enumerate(zip(cols, example_questions)):
@@ -591,6 +594,22 @@ with tab2:
 
     if hasattr(rag, "_cache") and len(rag._cache._cache) > 0:
         st.caption(f"📦 缓存: {len(rag._cache._cache)} 条常见问答（重复问题秒回）")
+
+    with st.expander("📚 问答知识来源（含文献与公开数据）"):
+        st.markdown("""
+        本系统标准问答的知识来源覆盖**国际标准 + 中国标准 + 研究文献/公开数据**三大类：
+
+        **🇨🇳 中国标准条款库**
+        - `chinese_standards_kb.md` — 8 项国标/行标综述（GB/T 23258、SY/T 0087、GB 50251、SY/T 6648、GB/T 21447、GB/T 30582、SY/T 0036）
+        - `china_standards_clauses.md`（新增）— 上述标准的**条款级阈值**（防腐层厚度、阴极保护电位、评价等级、设计系数等）
+
+        **🌐 研究资料与公开数据**
+        - `research_references.md` — 管线腐蚀 7 大痛点、**PHMSA/PRCI/EGIG/CONCAWE/NTSB/NIST/NETL 等公开数据库链接**、关键论文与标准引用（de Waard 系列、NORSOK M-506、API RP 14E、NACE MR0175、NACE SP0204 等）
+
+        **ℹ️ 关于覆盖率**
+        - **本地向量检索模式**：`data/standards/` 下所有 `.md` 自动入库，文献与数据来源问答**已覆盖**。
+        - **Dify Cloud 模式（本系统线上默认）**：需将 `research_references.md` 与 `china_standards_clauses.md` 上传至 Dify 知识库后，线上问答才能覆盖文献/细分条款。操作步骤：Dify 控制台 → 知识库 → 创建/选择本应用知识库 → 导入这两个文件 → 重新发布。
+        """)
 
     st.markdown("---")
 
@@ -812,8 +831,10 @@ with tab7:
 
     **4. 标准问答模块**
     - Dify Cloud RAG 引擎 + 国际标准（NACE/API/ASME）+ 中国标准（GB/SY/T）知识库
+    - 知识库新增**条款级细分**：`china_standards_clauses.md`（防腐层厚度/阴极保护电位/评价等级/设计系数等数值阈值）
+    - 新增**文献与公开数据覆盖**：`research_references.md`（PHMSA/PRCI/EGIG 等数据库链接 + 关键论文与标准引用）
     - Streaming 流式响应（首字 2-3 秒）+ LRU 缓存
-    - 三级降级策略：Dify API → 本地向量检索 → 基础模式
+    - 三级降级策略：Dify API → 本地向量检索（自动收录 data/standards 全部 .md）→ 基础模式
 
     **5. 数据探索模块**
     - 数据集统计概览与预览
@@ -835,6 +856,7 @@ with tab7:
 
     **📚 研究资料与公开数据源**
     - 管线腐蚀痛点、PHMSA/PRCI/EGIG/CONCAWE/NTSB/NIST/NETL 等公开数据库、关键论文与标准引用见 `data/standards/research_references.md`
+    - 中国标准条款级细分（防腐层厚度 / 阴极保护电位 / 评价等级 / 设计系数等数值阈值）见 `data/standards/china_standards_clauses.md`
 
     ### 技术栈
 

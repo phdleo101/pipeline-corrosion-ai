@@ -38,7 +38,9 @@ pinned: true
 
 ### Tab 2: 标准问答
 - 对 NACE MR0175、API 571、ASME B31.8S 等国际标准和 GB/T 23258、SY/T 0087 等中国标准进行智能问答
-- Dify Cloud RAG 流式响应 + LRU 缓存
+- 知识库新增**条款级细分**（`china_standards_clauses.md`：防腐层厚度、阴极保护电位、评价等级、设计系数等数值阈值）
+- 新增**文献与公开数据覆盖**（`research_references.md`：PHMSA/PRCI/EGIG 等数据库链接 + 关键论文与标准引用）
+- Dify Cloud RAG 流式响应 + LRU 缓存；本地模式自动收录 `data/standards/` 下全部 `.md`
 
 ### Tab 3: 数据探索
 - 数据分布分析、相关性热力图、特征重要性、多模型对比（GBR/RF/DT/LR）
@@ -64,6 +66,7 @@ pinned: true
 ### Tab 7: 关于
 - 系统功能模块说明、技术栈与联系方式
 - 研究资料与公开数据源见 `data/standards/research_references.md`
+- 中国标准条款级细分见 `data/standards/china_standards_clauses.md`
 
 ## 技术栈
 
