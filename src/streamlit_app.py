@@ -937,20 +937,43 @@ with tab5:
 
         # 5×5 矩阵热力图
         labels = ["极低", "低", "中", "高", "极高"]
+        # 风险等级数值矩阵（1=低 2=中 3=高 4=极高），y轴已反转，故矩阵同步反转
+        risk_z = [
+            [1, 1, 2, 3, 3],
+            [1, 2, 2, 3, 4],
+            [2, 2, 3, 3, 4],
+            [3, 3, 3, 4, 4],
+            [3, 4, 4, 4, 4],
+        ][::-1]
+        risk_text = [
+            ["低风险", "低风险", "中风险", "高风险", "高风险"],
+            ["低风险", "中风险", "中风险", "高风险", "极高风险"],
+            ["中风险", "中风险", "高风险", "高风险", "极高风险"],
+            ["高风险", "高风险", "高风险", "极高风险", "极高风险"],
+            ["高风险", "极高风险", "极高风险", "极高风险", "极高风险"],
+        ][::-1]
+        risk_colorscale = [
+            [0.0, "#27ae60"], [0.25, "#27ae60"],   # 低风险
+            [0.25, "#f39c12"], [0.50, "#f39c12"],   # 中风险
+            [0.50, "#e74c3c"], [0.75, "#e74c3c"],   # 高风险
+            [0.75, "#c0392b"], [1.00, "#c0392b"],   # 极高风险
+        ]
         fig_rm = go.Figure(data=go.Heatmap(
-            z=RISK_MATRIX_COLORS,
+            z=risk_z,
             x=labels,
             y=labels[::-1],
-            colorscale="Custom",
+            colorscale=risk_colorscale,
             showscale=False,
-            text=RISK_MATRIX_COLORS,
+            text=risk_text,
             texttemplate="%{text}",
             hoverongaps=False,
+            zmin=1,
+            zmax=4,
         ))
-        # 标注当前位置
+        # 标注当前位置（y轴反转后，prob_idx 需镜像）
         fig_rm.add_trace(go.Scatter(
-            x=[rm["cons_level"]],
-            y=[labels[::-1][rm["prob_idx"]]],
+            x=[labels[rm["cons_idx"]]],
+            y=[labels[::-1][4 - rm["prob_idx"]]],
             mode="markers+text",
             marker=dict(size=18, color="white", symbol="circle", line=dict(width=3, color="black")),
             text="●",
