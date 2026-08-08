@@ -20,6 +20,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from corrosion_model import CorrosionPredictor
 from rag_engine import CorrosionRAG
+from integrity_tools import b31g_calculate, recommend_inhibitor, risk_matrix, RISK_MATRIX_COLORS
 from styles import apply_theme
 
 # ----------------------
@@ -59,8 +60,9 @@ with st.sidebar:
     st.markdown("""
     - [腐蚀预测](#tab1)
     - [标准问答](#tab2)
-    - [数据探索](#tab3)
-    - [关于](#tab4)
+    - [完整性工具](#tab3)
+    - [数据探索](#tab4)
+    - [关于](#tab5)
     """)
     st.markdown("---")
     st.caption("MIT License")
@@ -73,7 +75,7 @@ I18N = {
     "中文": {
         "title": "🔧 管道腐蚀预测与标准问答系统",
         "subtitle": "Pipeline Corrosion Prediction & Standards Q&A",
-        "tabs": ["📊 腐蚀预测", "💬 标准问答", "📈 数据探索", "ℹ️ 关于"],
+        "tabs": ["📊 腐蚀预测", "💬 标准问答", "🔧 完整性工具", "📈 数据探索", "ℹ️ 关于"],
         "input_params": "输入管道参数",
         "predict_btn": "🔍 预测腐蚀速率",
         "compare_btn": "📊 对比材料",
@@ -94,7 +96,7 @@ I18N = {
     "English": {
         "title": "🔧 Pipeline Corrosion Prediction & Standards Q&A",
         "subtitle": "AI-Powered Corrosion Management",
-        "tabs": ["📊 Prediction", "💬 Q&A", "📈 Data Explorer", "ℹ️ About"],
+        "tabs": ["📊 Prediction", "💬 Q&A", "🔧 Integrity Tools", "📈 Data Explorer", "ℹ️ About"],
         "input_params": "Input Parameters",
         "predict_btn": "🔍 Predict Corrosion Rate",
         "compare_btn": "📊 Compare Materials",
@@ -176,7 +178,7 @@ if st.query_params.get("shared") == "1":
 # ----------------------
 # 选项卡
 # ----------------------
-tab1, tab2, tab3, tab4 = st.tabs(T["tabs"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(T["tabs"])
 
 # ======================
 # Tab 1: 腐蚀预测 (增强版)
@@ -761,12 +763,17 @@ with tab4:
     - 剩余寿命预测：基于壁厚参数和腐蚀速率计算管道剩余服役寿命
     - 检测周期推荐：依据 NACE SP0775 风险分类推荐内检测/外检测/阴保监测周期
 
-    **3. 标准问答模块**
+    **3. 完整性工具模块**
+    - B31G 剩余强度计算：ASME B31G Level 1 公式，评估缺陷失效压力和剩余强度率
+    - 缓蚀剂推荐：基于温度/流速/CO₂/H₂S/介质类型推荐缓蚀剂类型和注入浓度
+    - 风险矩阵评估：5×5 概率×后果矩阵，定位管道综合风险等级
+
+    **4. 标准问答模块**
     - Dify Cloud RAG 引擎 + 国际标准（NACE/API/ASME）+ 中国标准（GB/SY/T）知识库
     - Streaming 流式响应（首字 2-3 秒）+ LRU 缓存
     - 三级降级策略：Dify API → 本地向量检索 → 基础模式
 
-    **4. 数据探索模块**
+    **5. 数据探索模块**
     - 数据集统计概览与预览
     - 分布分析（直方图 + 箱线图）
     - 相关性热力图 + 特征重要性
@@ -790,3 +797,142 @@ with tab4:
     ---
     *MIT License*
     """)
+
+# ======================
+# Tab 5: 完整性工具 (新增 P2)
+# ======================
+with tab5:
+    st.markdown("### 🔧 管道完整性管理工具")
+
+    tool_tab1, tool_tab2, tool_tab3 = st.tabs([
+        "📐 B31G剩余强度", "🧪 缓蚀剂推荐", "🎯 风险矩阵"
+    ])
+
+    # --- B31G 剩余强度计算器 ---
+    with tool_tab1:
+        st.markdown("#### ASME B31G 腐蚀缺陷剩余强度评估")
+        st.markdown("输入管道几何参数和缺陷尺寸，评估剩余强度和失效压力。")
+
+        col_b1, col_b2 = st.columns(2)
+        with col_b1:
+            b_D = st.number_input("管径 D (mm)", min_value=50.0, max_value=2000.0, value=610.0, step=10.0, key="b_D")
+            b_t = st.number_input("壁厚 t (mm)", min_value=2.0, max_value=50.0, value=12.0, step=0.5, key="b_t")
+            b_sy = st.number_input("屈服强度 σy (MPa)", min_value=200.0, max_value=700.0, value=415.0, step=5.0, key="b_sy",
+                                   help="常见管材：X52=360, X60=415, X65=450, X70=485 MPa")
+        with col_b2:
+            b_d = st.number_input("缺陷深度 d (mm)", min_value=0.1, max_value=50.0, value=4.0, step=0.1, key="b_d")
+            b_L = st.number_input("缺陷长度 L (mm)", min_value=1.0, max_value=2000.0, value=100.0, step=5.0, key="b_L")
+            b_P = st.number_input("操作压力 P (MPa，可选)", min_value=0.0, max_value=30.0, value=8.0, step=0.5, key="b_P")
+
+        if st.button("🔢 计算剩余强度", key="b_calc", width="stretch"):
+            if b_d >= b_t:
+                st.error("⚠️ 缺陷深度不能超过壁厚！")
+            else:
+                res = b31g_calculate(b_D, b_t, b_d, b_L, b_sy, b_P if b_P > 0 else None)
+
+                col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+                col_r1.metric("Folias因子 M", f"{res['M']:.2f}")
+                col_r2.metric("流动应力 (MPa)", f"{res['sigma_f']:.0f}")
+                col_r3.metric("失效压力 (MPa)", f"{res['Pf']:.2f}" if res['Pf'] != float('inf') else "∞")
+                col_r4.metric("深度比 d/t", f"{res['dtr']:.2f}")
+
+                if "RSF" in res:
+                    st.markdown(f"**剩余强度率 RSF**: {res['RSF']:.2f} — {res['rsf_status']}")
+
+                st.markdown(f"""
+                <div style="background: {res['verdict_color']}15; border: 2px solid {res['verdict_color']}; border-radius: 10px; padding: 14px; margin: 10px 0; text-align: center;">
+                    <span style="font-size: 1.1rem; font-weight: 700; color: {res['verdict_color']};">{res['verdict']}</span>
+                    <div style="margin-top: 6px; font-size: 0.85rem;">{res['verdict_msg']}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                st.caption("📌 依据 ASME B31G Level 1 简化公式：Pf = 2t·σf·(1-d/t) / [D·(1-0.85d/(t·M))]，σf = 1.1×σy")
+
+    # --- 缓蚀剂推荐 ---
+    with tool_tab2:
+        st.markdown("#### 缓蚀剂选型与加注推荐")
+        st.markdown("基于工况条件推荐缓蚀剂类型、注入浓度和预期效果。")
+
+        col_i1, col_i2 = st.columns(2)
+        with col_i1:
+            i_temp = st.slider("温度 (°C)", 0, 150, 60, step=1, key="i_temp")
+            i_flow = st.slider("流速 (m/s)", 0.0, 10.0, 2.0, step=0.1, key="i_flow")
+        with col_i2:
+            i_co2 = st.slider("CO₂分压 (MPa)", 0.0, 10.0, 1.0, step=0.1, key="i_co2")
+            i_h2s = st.slider("H₂S浓度 (ppm)", 0, 1000, 20, step=10, key="i_h2s")
+        i_medium = st.selectbox("介质类型", ["湿气", "干气", "产出水", "原油"], key="i_medium")
+
+        if st.button("🔍 推荐缓蚀剂", key="i_rec", width="stretch"):
+            rec = recommend_inhibitor(i_temp, i_flow, i_co2, i_h2s, i_medium)
+
+            st.markdown(f"**推荐类型**: {rec['type']}")
+            st.caption(f"💡 {rec['type_reason']}")
+
+            col_a, col_b, col_c = st.columns(3)
+            col_a.metric("连续注入浓度", f"{rec['injection_ppm']} ppm")
+            col_b.metric("批处理浓度", f"{rec['batch_ppm']} ppm")
+            col_c.metric("预期缓蚀率", rec['expected_efficiency'])
+
+            st.markdown(f"**介质建议**: {rec['medium_advice']}")
+
+            with st.expander("📋 注意事项"):
+                for note in rec["notes"]:
+                    st.markdown(f"- {note}")
+
+    # --- 风险矩阵 ---
+    with tool_tab3:
+        st.markdown("#### 管道风险矩阵评估 (5×5)")
+        st.markdown("基于腐蚀速率（失效概率）和管道参数（失效后果）评估综合风险等级。")
+
+        col_x1, col_x2 = st.columns(2)
+        with col_x1:
+            x_rate = st.slider("腐蚀速率 (mm/a)", 0.0, 5.0, 0.5, step=0.05, key="x_rate")
+            x_dia = st.number_input("管径 (mm)", min_value=50.0, max_value=2000.0, value=610.0, step=10.0, key="x_dia")
+        with col_x2:
+            x_pres = st.slider("操作压力 (MPa)", 0.0, 20.0, 8.0, step=0.5, key="x_pres")
+            x_loc = st.selectbox("位置类型", ["人口密集区", "一般区域", "荒野"], key="x_loc")
+
+        rm = risk_matrix(x_rate, x_dia, x_pres, x_loc)
+
+        # 5×5 矩阵热力图
+        labels = ["极低", "低", "中", "高", "极高"]
+        fig_rm = go.Figure(data=go.Heatmap(
+            z=RISK_MATRIX_COLORS,
+            x=labels,
+            y=labels[::-1],
+            colorscale="Custom",
+            showscale=False,
+            text=RISK_MATRIX_COLORS,
+            texttemplate="%{text}",
+            hoverongaps=False,
+        ))
+        # 标注当前位置
+        fig_rm.add_trace(go.Scatter(
+            x=[rm["cons_level"]],
+            y=[labels[::-1][rm["prob_idx"]]],
+            mode="markers+text",
+            marker=dict(size=18, color="white", symbol="circle", line=dict(width=3, color="black")),
+            text="●",
+            textfont=dict(size=16, color="black"),
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+        fig_rm.update_layout(
+            height=380,
+            margin=dict(l=60, r=20, t=20, b=60),
+            xaxis_title="失效后果 →",
+            yaxis_title="↑ 失效概率",
+            template="plotly_dark" if dark_mode else "plotly_white",
+        )
+        st.plotly_chart(fig_rm, width="stretch")
+
+        col_p, col_c, col_r = st.columns(3)
+        col_p.metric("失效概率", rm["prob_level"])
+        col_c.metric("失效后果", rm["cons_level"])
+        col_r.markdown(f"""
+        <div style="background: {rm['risk_color']}15; border: 2px solid {rm['risk_color']}; border-radius: 8px; padding: 8px; text-align: center;">
+            <span style="font-weight: 700; color: {rm['risk_color']}; font-size: 0.95rem;">{rm['risk_level']}</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.caption("📌 概率等级由腐蚀速率决定，后果等级由管径/压力/位置综合评分决定。白圈标注当前管道风险位置。")
