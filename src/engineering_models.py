@@ -368,3 +368,129 @@ def pren_all():
         r = pren(m)
         out.append({"material": m, "PREN": r["PREN"], "rating": r["rating"], "note": r.get("note", "")})
     return out
+
+
+# ----------------------------------------------------------------------
+# 6. SCC 开挖验证优先级 + ECDA 流程 (NACE SP0204 / API RP 1176)
+# ----------------------------------------------------------------------
+
+def scc_excavation_priority(coating_type, operating_stress_pct, age_years,
+                             temperature_C, cp_shielded, terrain,
+                             hca=False, ili_anomaly=False):
+    """
+    SCC 开挖验证优先级与 ECDA 四步流程（基于 scc_susceptibility 输出再决策一层）
+
+    在敏感性筛查之上，叠加高后果区(HCA)与内检测(ILI)异常，给出开挖优先级与
+    标准 ECDA（外部腐蚀直接评估）四步流程。用于把"敏感性分数"翻译成"行动清单"。
+
+    参数:
+        hca: 是否位于高后果区（人口/环境敏感）
+        ili_anomaly: 内检测(ILI)是否提示金属损失/几何异常
+    返回: 字典
+    """
+    sr = scc_susceptibility(coating_type, operating_stress_pct, age_years,
+                            temperature_C, cp_shielded, terrain)
+    max_score = min(max(sr["high_pH_score"], sr["near_neutral_score"]), 100)
+
+    p = max_score
+    if hca:
+        p += 15
+    if ili_anomaly:
+        p += 20
+    p = min(p, 100)
+
+    if p >= 75:
+        priority = "P1 — 立即开挖验证"
+        reason = "高敏感性叠加高后果区或内检测异常，存在裂纹泄漏风险"
+        conf = "高"
+    elif p >= 55:
+        priority = "P2 — 12 个月内计划开挖"
+        reason = "敏感性较高，建议近期安排直接检查确认"
+        conf = "中"
+    else:
+        priority = "P3 — 纳入周期性监测"
+        reason = "敏感性较低，按常规 ECDA 周期监测即可"
+        conf = "低"
+
+    edcda_steps = [
+        "① 预评估 (Pre-assessment)：收集历史数据、涂层年代、应力与温度，圈定 SCC 潜在区域",
+        "② 间接检测 (Indirect Inspection)：CIS 密间距电位 + DCVG/Pearson 定位涂层缺陷与异常电位",
+        "③ 直接检查 (Direct Examination)：开挖测厚 + 磁粉/超声检测裂纹，取样确认 SCC 类型",
+        "④ 后评估 (Post-assessment)：评定缺陷、计算剩余强度(B31G/RSTRENG)，制定修复或监测",
+    ]
+    return {
+        "priority": priority,
+        "priority_score": p,
+        "priority_reason": reason,
+        "confidence": conf,
+        "susceptibility": sr,
+        "edcda_steps": edcda_steps,
+        "reference": "NACE SP0204 (SCCDA); API RP 1176 (SCC 管理); NACE SP0502 (ECDA)",
+    }
+
+
+# ----------------------------------------------------------------------
+# 7. SCC 裂纹扩展速率与剩余寿命 (B31G Folias + 经验扩展速率)
+# ----------------------------------------------------------------------
+
+def scc_crack_life(a0_mm, wall_t_mm, diameter_mm, yield_strength_mpa,
+                   oper_stress_pct, scc_type="near_neutral",
+                   crack_length_mm=50.0, growth_rate=None):
+    """
+    SCC 裂纹扩展与剩余寿命估算
+
+    临界裂纹深度 a_c 采用 B31G/RSTRENG 思路的 Folias（鼓胀）因子：
+        σ_f = 1.1·σ_y (流变应力)；σ_oper = (%SMYS/100)·σ_y
+        M = √(1 + 0.6275·(L²/Dt) − 0.003375·(L⁴/D²t²))   (轴向缺陷, L²/Dt ≤ 50)
+        a_c = t·σ_f / (σ_f + M·σ_oper)
+    剩余寿命 = (a_c − a₀) / 经验扩展速率。
+
+    参数:
+        a0_mm: 初始裂纹深度 (mm)
+        wall_t_mm: 壁厚 (mm)
+        diameter_mm: 管径 (mm)
+        yield_strength_mpa: 屈服强度 (MPa)
+        oper_stress_pct: 操作应力占 SMYS 百分比
+        scc_type: "near_neutral" / "high_pH"
+        crack_length_mm: 轴向裂纹长度 (mm)
+        growth_rate: 经验扩展速率 mm/yr（缺省按类型取默认）
+    返回: 字典
+    """
+    sigma_y = yield_strength_mpa
+    sigma_f = 1.1 * sigma_y
+    sigma_oper = oper_stress_pct / 100.0 * sigma_y
+
+    D, t, L = diameter_mm, wall_t_mm, crack_length_mm
+    ratio = (L * L) / (D * t)
+    if ratio <= 50:
+        M = (1 + 0.6275 * ratio - 0.003375 * ratio * ratio) ** 0.5
+    else:
+        M = 0.032 * ratio + 3.3  # 大缺陷近似
+    a_c = t * sigma_f / (sigma_f + M * sigma_oper)
+
+    if growth_rate is None:
+        growth_rate = 0.30 if scc_type == "near_neutral" else 0.80  # mm/yr
+
+    if a_c <= a0_mm:
+        life = 0.0
+        verdict = "⚠️ 已达/超过临界深度，须立即评估修复或更换"
+    else:
+        life = (a_c - a0_mm) / growth_rate
+        if life <= 2:
+            verdict = "🔴 剩余寿命 ≤2 年，优先开挖/修复"
+        elif life <= 5:
+            verdict = "🟠 剩余寿命 2–5 年，加密监测并排期修复"
+        elif life <= 10:
+            verdict = "🟡 剩余寿命 5–10 年，纳入常规监测"
+        else:
+            verdict = "🟢 剩余寿命 >10 年，常规监测"
+
+    return {
+        "a0_mm": a0_mm,
+        "a_c_mm": round(a_c, 3),
+        "folias_M": round(M, 3),
+        "growth_rate_mm_yr": growth_rate,
+        "life_years": round(life, 1),
+        "verdict": verdict,
+        "reference": "B31G / RSTRENG (Folias 因子); Kiefner & Vieth (Battelle); API 579 裂纹评定; NACE SP0204",
+    }

@@ -25,11 +25,13 @@ from integrity_tools import b31g_calculate, recommend_inhibitor, risk_matrix, RI
 from environment_models import (
     soil_corrosion, seawater_corrosion, mic_corrosion,
     galvanic_corrosion, corrosion_cost_estimate,
+    mic_multi_organism, mic_biocide_program,
 )
 from engineering_models import (
     co2_corrosion, co2_corrosion_curve,
     erosion_critical_velocity, erosion_rate_salama, EROSION_C,
     h2s_ssc_screening, scc_susceptibility, pren_all,
+    scc_excavation_priority, scc_crack_life,
 )
 from styles import apply_theme
 
@@ -1101,6 +1103,47 @@ with tab5:
                 res = mic_corrosion(m_srb, m_nut, m_temp, m_ox, MATERIAL_CHOICES[m_mat])
                 _show_env_result("MIC", res, ("risk", "风险等级"), ("rate", "腐蚀速率 (mm/a)"))
 
+            st.divider()
+            st.markdown("##### 🦠 MIC-1 多菌属与生物膜热点")
+            st.markdown("在 SRB 基础上纳入 APB(产酸)/IRB(铁氧化)/SOB(硫氧化)，并定位生物膜富集热点。")
+            mm1, mm2 = st.columns(2)
+            with mm1:
+                mm_apb = st.number_input("APB 产酸菌 (MPN/mL)", min_value=1.0, max_value=1000000.0, value=1000.0, step=500.0, key="mm_apb")
+                mm_irb = st.number_input("IRB 铁氧化菌 (MPN/mL)", min_value=1.0, max_value=1000000.0, value=1000.0, step=500.0, key="mm_irb")
+                mm_sob = st.number_input("SOB 硫氧化菌 (MPN/mL)", min_value=1.0, max_value=1000000.0, value=1000.0, step=500.0, key="mm_sob")
+            with mm2:
+                mm_flow = st.selectbox("流速状态", ["低流速", "正常", "高流速"], key="mm_flow")
+                mm_dead = st.checkbox("存在死管/滞留段", value=False, key="mm_dead")
+            if st.button("🔢 多菌属评估", key="mm_calc2", width="stretch"):
+                mo = mic_multi_organism(m_srb, mm_apb, mm_irb, mm_sob, m_nut, m_temp, m_ox,
+                                        flow_regime=mm_flow, dead_leg=mm_dead, material=MATERIAL_CHOICES[m_mat])
+                st.markdown(f"**多菌属 MIC 指数**: {mo['mic_index']} ｜ **风险**: {mo['risk']} ｜ **主导菌属**: {mo['dominant']}")
+                st.markdown(f"**腐蚀速率(估)**: {mo['rate']} mm/a")
+                st.markdown("**生物膜热点**:")
+                for h in mo["hotspots"]:
+                    st.markdown(f"- {h}")
+                st.markdown(f"**建议**: {mo['advice']}")
+                st.caption("📚 " + mo["reference"])
+
+            st.divider()
+            st.markdown("##### 💊 MIC-2 杀菌剂方案设计")
+            mb1, mb2, mb3 = st.columns(3)
+            with mb1:
+                mb_risk = st.selectbox("MIC 风险等级", ["极低", "中等", "高", "极高"], index=1, key="mb_risk")
+            with mb2:
+                mb_sys = st.selectbox("系统类型", ["间歇系统", "连续系统"], key="mb_sys")
+            with mb3:
+                mb_temp = st.number_input("水温 (°C)", min_value=0.0, max_value=90.0, value=30.0, step=1.0, key="mb_temp")
+            if st.button("🔢 生成杀菌剂方案", key="mb_calc", width="stretch"):
+                bp = mic_biocide_program(mb_risk, system_type=mb_sys, water_temp=mb_temp)
+                st.markdown(f"**推荐杀菌剂**: {bp['biocide_type']}")
+                st.markdown(f"**投加方式**: {bp['dosing_mode']} ｜ **剂量**: {bp['dose']}")
+                st.markdown(f"**轮换策略**: {bp['rotation']}")
+                st.markdown(f"**监测**: {bp['monitoring']}")
+                if bp["temp_note"]:
+                    st.caption("🌡️ " + bp["temp_note"])
+                st.caption("📚 " + bp["reference"])
+
         else:  # 电偶腐蚀
             col_g1, col_g2 = st.columns(2)
             with col_g1:
@@ -1309,6 +1352,44 @@ with tab6:
                 for d in sr["drivers_near_neutral"]:
                     st.markdown(f"- {d}")
             st.caption("📚 " + sr["reference"])
+
+            st.divider()
+            st.markdown("##### 🛠️ SCC-1 开挖验证优先级 (ECDA)")
+            s_hca = st.checkbox("位于高后果区 (HCA)", value=False, key="s_hca")
+            s_ili = st.checkbox("内检测(ILI)异常提示", value=False, key="s_ili")
+            if st.button("🔢 生成开挖优先级", key="scc_exc", width="stretch"):
+                ep = scc_excavation_priority(s_coat, s_stress, s_age, s_temp, s_cp, s_terr, hca=s_hca, ili_anomaly=s_ili)
+                st.markdown(f"**开挖优先级**: {ep['priority']} ｜ 优先级评分 {ep['priority_score']} ｜ 置信度 {ep['confidence']}")
+                st.markdown(f"**判定依据**: {ep['priority_reason']}")
+                st.markdown("**ECDA 四步流程**:")
+                for step in ep["edcda_steps"]:
+                    st.markdown(f"- {step}")
+                st.caption("📚 " + ep["reference"])
+
+            st.divider()
+            st.markdown("##### 📉 SCC-2 裂纹扩展与剩余寿命")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                sl_a0 = st.number_input("初始裂纹深度 a₀ (mm)", min_value=0.1, max_value=20.0, value=2.0, step=0.1, key="sl_a0")
+                sl_wt = st.number_input("壁厚 t (mm)", min_value=2.0, max_value=40.0, value=12.0, step=0.5, key="sl_wt")
+            with c2:
+                sl_d = st.number_input("管径 D (mm)", min_value=50.0, max_value=2000.0, value=610.0, step=10.0, key="sl_d")
+                sl_y = st.number_input("屈服强度 SMYS (MPa)", min_value=200.0, max_value=800.0, value=450.0, step=10.0, key="sl_y")
+            with c3:
+                sl_stress2 = st.number_input("操作应力 %SMYS", min_value=10.0, max_value=100.0, value=70.0, step=1.0, key="sl_stress2")
+                sl_type = st.selectbox("SCC 类型", ["near_neutral (近中性pH)", "high_pH (高pH)"], key="sl_type")
+                sl_len = st.number_input("裂纹长度 L (mm)", min_value=5.0, max_value=500.0, value=50.0, step=5.0, key="sl_len")
+            if st.button("🔢 计算剩余寿命", key="scc_life", width="stretch"):
+                life = scc_crack_life(sl_a0, sl_wt, sl_d, sl_y, sl_stress2,
+                                      scc_type="near_neutral" if sl_type.startswith("near") else "high_pH",
+                                      crack_length_mm=sl_len)
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("临界裂纹深度 a_c", f"{life['a_c_mm']:.2f} mm")
+                m2.metric("Folias 因子 M", f"{life['folias_M']:.2f}")
+                m3.metric("扩展速率", f"{life['growth_rate_mm_yr']:.2f} mm/a")
+                m4.metric("剩余寿命", f"{life['life_years']:.1f} 年")
+                st.markdown(f"**处置建议**: {life['verdict']}")
+                st.caption("📚 " + life["reference"])
 
     # --- PREN ---
     with mech_tab5:

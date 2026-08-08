@@ -383,6 +383,178 @@ def _mic_advice(risk):
 
 
 # ----------------------------------------------------------------------
+# 3b. MIC 多菌属评估与生物膜热点 (NACE SP0192 / TM0194)
+# ----------------------------------------------------------------------
+
+def mic_multi_organism(srb, apb, irb, sob, nutrient, temperature, oxygen,
+                       flow_regime="正常", dead_leg=False, material="carbon_steel"):
+    """
+    多菌属 MIC 风险评估（在 SRB 基础上扩展到 APB/IRB/SOB，并定位生物膜热点）
+
+    SRB 主导经典的硫酸盐还原产 H2S 腐蚀；APB（产酸菌）使局部 pH 下降；
+    IRB（铁氧化菌）形成结瘤与氧浓差电池；SOB（硫氧化菌）把硫化物氧化为硫酸，
+    造成极强局部酸化。生物膜与沉积物下方(under-deposit)是 MIC 高发区。
+
+    参数:
+        srb/apb/irb/sob: 各菌属数量 (MPN/mL，对数级常见 10^2~10^6)
+        nutrient: 营养物水平 (低/中/高)
+        temperature: 温度 (°C)
+        oxygen: 溶解氧 (mg/L)
+        flow_regime: 流速状态 (低流速/正常/高流速)
+        dead_leg: 是否存在死管/滞留段
+        material: 管材代码
+    返回: 字典
+    """
+    import math
+
+    def _log_score(v):
+        try:
+            lg = math.log10(max(v, 1))
+        except (ValueError, TypeError):
+            lg = 2
+        if lg < 3:
+            return 1
+        elif lg < 4:
+            return 2
+        elif lg < 5:
+            return 3
+        return 4
+
+    s_srb = _log_score(srb)
+    s_apb = _log_score(apb)
+    s_irb = _log_score(irb)
+    s_sob = _log_score(sob)
+    nutrient_score = {"低": 0, "中": 1, "高": 2}.get(nutrient, 1)
+    if 25 <= temperature <= 45:
+        s_temp = 2
+    elif 10 <= temperature < 25 or 45 < temperature <= 60:
+        s_temp = 1
+    else:
+        s_temp = 0
+    if oxygen < 0.5:
+        s_ox = 1
+    elif oxygen <= 2:
+        s_ox = 2
+    else:
+        s_ox = 1
+
+    # 生物膜热点（低流速/死管/积水促进沉积与厌氧微区）
+    hotspots = []
+    if flow_regime == "低流速" or dead_leg:
+        hotspots.append("低流速/死管段：沉积与滞留，生物膜易富集")
+    if flow_regime == "高流速":
+        hotspots.append("高流速段：冲刷抑制生物膜，但弯头/缩径处仍可能结瘤")
+    else:
+        hotspots.append("焊缝/垫片/缝隙：under-deposit 微环境利于 MIC")
+
+    # 主导菌属
+    scores = {"SRB": s_srb, "APB(产酸)": s_apb, "IRB(铁氧化)": s_irb, "SOB(硫氧化)": s_sob}
+    dominant = max(scores, key=scores.get)
+    org_sum = s_srb + s_apb + s_irb + s_sob
+
+    mic_index = org_sum + nutrient_score + s_temp + s_ox  # 0 ~ 19
+    if mic_index <= 4:
+        risk = "极低"
+        rate = 0.02
+        color = "#27ae60"
+    elif mic_index <= 8:
+        risk = "中等"
+        rate = 0.08
+        color = "#f39c12"
+    elif mic_index <= 13:
+        risk = "高"
+        rate = 0.20
+        color = "#e74c3c"
+    else:
+        risk = "极高"
+        rate = 0.45
+        color = "#c0392b"
+
+    factor = _MATERIAL_FACTOR.get(material, 1.0)
+    rate = round(rate * factor, 4)
+
+    return {
+        "mic_index": mic_index,
+        "risk": risk,
+        "rate": rate,
+        "color": color,
+        "dominant": dominant,
+        "organism_scores": scores,
+        "hotspots": hotspots,
+        "advice": _mic_advice(risk),
+        "reference": "NACE SP0192 (MIC 控制); NACE TM0194 (现场微生物检测); API RP 38",
+    }
+
+
+# ----------------------------------------------------------------------
+# 3c. MIC 杀菌剂方案设计 (NACE SP0192 / TM0212)
+# ----------------------------------------------------------------------
+
+def mic_biocide_program(risk_level, system_type="间歇系统", water_temp=30.0):
+    """
+    微生物腐蚀杀菌剂方案设计（基于 MIC 风险等级给出可操作投加方案）
+
+    非氧化性杀菌剂（戊二醛 glutaraldehyde、THPS 四羟甲基硫酸磷、DBNPA）对
+    SRB 高效且不受硫化物消耗；氧化性（次氯酸钠/二氧化氯）便宜但易被消耗。
+    为防止抗药性，建议两类轮换投加。
+
+    参数:
+        risk_level: MIC 风险等级 (极低/中等/高/极高)
+        system_type: 系统类型 (间歇系统/连续系统)
+        water_temp: 水温 (°C)
+    返回: 字典
+    """
+    plan = {
+        "极低": {
+            "type": "氧化性为主（次氯酸钠/二氧化氯）",
+            "mode": "冲击投加",
+            "dose_ppm": "20–50 ppm，每季度 1 次",
+            "rotation": "单一氧化性即可",
+            "monitor": "半年一次 SRB 检测",
+        },
+        "中等": {
+            "type": "非氧化性(戊二醛) + 氧化性轮换",
+            "mode": "冲击投加",
+            "dose_ppm": "戊二醛 100–150 ppm，每 1–2 月 1 次",
+            "rotation": "戊二醛 ↔ THPS 季度轮换",
+            "monitor": "每季度 SRB + 挂片失重",
+        },
+        "高": {
+            "type": "非氧化性(THPS / DBNPA) + 氧化性",
+            "mode": "冲击 + 必要时连续",
+            "dose_ppm": "THPS 150–200 ppm 冲击；连续 10–20 ppm",
+            "rotation": "THPS ↔ 戊二醛 ↔ DBNPA 季度轮换",
+            "monitor": "每月 SRB 杀灭率(目标≥99%) + 生物膜探针",
+        },
+        "极高": {
+            "type": "非氧化性(戊二醛/THPS/DBNPA 组合) + 氧化性强化",
+            "mode": "连续 + 高频冲击",
+            "dose_ppm": "连续 15–25 ppm；冲击 200 ppm 每 2 周",
+            "rotation": "三种非氧化性季度轮换 + 氧化性辅助",
+            "monitor": "每月 SRB 杀灭率 + 在线腐蚀探针 + ILI 复核",
+        },
+    }
+    p = plan.get(risk_level, plan["中等"])
+    # 水温提示
+    temp_note = ""
+    if water_temp > 50:
+        temp_note = "水温偏高：优先选热稳定好的 THPS/DBNPA，戊二醛高温易降解。"
+    elif water_temp < 15:
+        temp_note = "水温偏低：微生物活性下降，但仍需维持投加以防越冬群落复苏。"
+
+    return {
+        "risk_level": risk_level,
+        "biocide_type": p["type"],
+        "dosing_mode": p["mode"],
+        "dose": p["dose_ppm"],
+        "rotation": p["rotation"],
+        "monitoring": p["monitor"],
+        "temp_note": temp_note,
+        "reference": "NACE SP0192 (MIC 控制); NACE TM0212 (杀菌剂评价); NACE TM0194",
+    }
+
+
+# ----------------------------------------------------------------------
 # 4. 电偶腐蚀
 # ----------------------------------------------------------------------
 def galvanic_corrosion(noble_material, active_material, area_ratio, electrolyte="海水"):
